@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <!-- The slots carry real frame URLs, as on YouTube. This keeps them from
+       ever being requested. -->
+  <meta http-equiv="Content-Security-Policy" content="img-src 'self' data:">
+  <title>Quiet Feed Shorts check</title>
+  <link rel="stylesheet" href="../src/hidden.css">
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; padding: 16px; }
+    .slot { width: 270px; height: 480px; margin: 8px 0; background: #9bc; }
+    ytd-reel-video-renderer, shorts-video { display: block; position: relative; height: 100%; background: #333; color: #eee; }
+    #out { white-space: pre; font-family: ui-monospace, Consolas, monospace; }
+  </style>
+</head>
+
+<body>
+  <h3>Results</h3>
+  <div id="out">running…</div>
+  <h3>Fake Shorts player</h3>
+  <div id="player"></div>
+
+  <script>
+    /* A stand-in for the Shorts player, desktop (ytd-shorts) by default or
+       m.youtube.com (shorts-page) with ?mobile=1. Like the real ones it has a
+       single renderer and a single <video> that move from slot to slot, and a
+       swipe replays the order of events seen on youtube.com:
+
+         +20ms   blank text nodes in the renderer drop out
+         +60ms   the <video> is emptied and starts the next Short
+         +100ms  the renderer moves into the next slot
+         +250ms  the URL changes, while the old title is still showing
+         +400ms  the blank nodes come back
+         +700ms  the new title and channel arrive
+
+       Two gaps are stretched past what is typical, so that what can happen
+       happens every run. The URL trails the emptied <video> by ~70ms on the
+       real site, less than the 150ms between scans, so a scan only sometimes
+       lands in between. And the title usually lands ~150ms after the URL, but
+       has been seen to take over 500ms — past the moment a match is acted on. */
+    var params = new URLSearchParams(location.search);
+    var MOBILE = params.has('mobile');
+    var OCR = params.has('ocr');          // reading text in images, with the reader stubbed
+    var BLUR = params.has('blur');        // ...and "blur until read" on
+    var HIDDEN = params.has('hidden');    // opened in a background tab, then shown
+    var LATE = params.has('late');        // the word is added while its Short is on screen
+
+    /* With ?hidden=1 the page starts out hidden, and the player ignores Next
+       until it is shown and for a while after — as in Chrome 155, where a
+       player loaded in the background took 0.8–0.9s. &slow=1 makes it longer
+       than the filter waits, so the press has to be repeated. */
+    var DEAF_MS = params.has('slow') ? 1600 : 850;
+    var tabHidden = HIDDEN;
+    var shownAt = 0;
+    var ignored = 0;                      // Next presses the player ignored
+    if (HIDDEN) {
+      Object.defineProperty(document, 'hidden', { get: function () { return tabHidden; } });
+      Object.defineProperty(document, 'visibilityState', {
+        get: function () { return tabHidden ? 'hidden' : 'visible'; }
+      });
+    }
+    window.showTab = function () {
+      tabHidden = false;
+      shownAt = Date.now();
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    var HOME = location.pathname + location.search;
+
+    /* Two matches in a row, then a channel whose handle has "ad" in the
+       middle of it — with "ad" on the list — then a third match. */
+    var SHORTS = [
+      { id: 'aaaaaaaaaaa', channel: '@news', title: 'Trump rally highlights' },
+      { id: 'bbbbbbbbbbb', channel: '@clips', title: 'Trump speech, part 2' },
+      { id: 'ccccccccccc', channel: '@bread-ad-hoc', title: 'Baking bread at home' },
+      { id: 'ddddddddddd', channel: '@more', title: 'Trump again' },
+      { id: 'eeeeeeeeeee', channel: '@cats', title: 'A cat meets a cucumber' }
+    ];
+    /* With ?ocr=1: a Short whose title is innocent but whose first frame
+       isn't, between two that are innocent throughout. */
+    if (OCR) SHORTS = [
+      { id: 'aaaaaaaaaaa', channel: '@cats', title: 'A cat meets a cucumber', frame: 'cute cat' },
+      { id: 'bbbbbbbbbbb', channel: '@memes', title: 'You will laugh', frame: 'TRUMP 2028' },
+      { id: 'ccccccccccc', channel: '@bakes', title: 'Baking bread at home', frame: '' },
+      { id: 'ddddddddddd', channel: '@more', title: 'One more', frame: '' }
+    ];
+    var at = 0;
+
+    var areas = {
+      local: { wfConfig: { words: OCR ? ['trump'] : LATE ? ['cucumber'] : ['trump', 'ad'], enabled: true, ocr: OCR, ocrBlur: BLUR } },
+      sync: {}
+    };
+
+    /* The background page, stubbed: a frame "reads" as its text, a little
+       later, and every frame asked for is recorded. */
+    var READ_MS = 400;
+    var asked = [];
+    function readFrame(url) {
+      asked.push(url);
+      var m = /\/vi\/([\w-]+)\/frame0\.jpg$/.exec(url);
+      var one = m && SHORTS.filter(function (x) { return x.id === m[1]; })[0];
+      return new Promise(function (r) {
+        setTimeout(function () { r({ text: one ? one.frame : '' }); }, READ_MS);
+      });
+    }
+    function makeArea(name) {
+      return {
+        get: function (keys) {
+          var out = {};
+          (typeof keys === 'string' ? [keys] : (keys || [])).forEach(function (k) {
+            if (k in areas[name]) out[k] = areas[name][k];
+          });
+          return Promise.resolve(out);
+        },
+        set: function (obj) { Object.assign(areas[name], obj); return Promise.resolve(); },
+        remove: function (k) { delete areas[name][k]; return Promise.resolve(); }
+      };
+    }
+    var changeListeners = [];
+    window.setWords = function (words) {
+      areas.local.wfConfig = { words: words, enabled: true, savedAt: Date.now() };
+      changeListeners.forEach(function (fn) { fn({ wfConfig: {} }); });
+    };
+    window.browser = {
+      storage: {
+        local: makeArea('local'),
+        sync: makeArea('sync'),
+        onChanged: { addListener: function (fn) { changeListeners.push(fn); } }
+      },
+      runtime: {
+        onMessage: { addListener: function (fn) { window.__onMessage = fn; } },
+        sendMessage: function (msg) {
+          if (msg && msg.type === 'wf-ocr-ready') return Promise.resolve({ granted: OCR });
+          if (msg && msg.type === 'wf-ocr') return readFrame(msg.url);
+          return Promise.resolve({});
+        }
+      }
+    };
+    window.addEventListener('error', function (e) { console.error('PAGE-ERROR: ' + e.message); });
+
+    /* A <video> with no source can't really play, so its play state is faked
+       on the instance; the events are real. */
+    function fakeVideo() {
+      var v = document.createElement('video');
+      var paused = false;
+      Object.defineProperty(v, 'paused', { get: function () { return paused; } });
+      v.pause = function () {
+        if (paused) return;
+        paused = true;
+        v.dispatchEvent(new Event('pause'));
+      };
+      v.play = function () {
+        paused = false;
+        v.dispatchEvent(new Event('play'));
+        return Promise.resolve();
+      };
+      v.load = function () { };
+      return v;
+    }
+
+    /* Inside the player's own element, as on YouTube: the frames of the
+       Shorts queued up are looked for there. */
+    var player = document.createElement(MOBILE ? 'shorts-page' : 'ytd-shorts');
+    player.style.display = 'block';
+    document.getElementById('player').appendChild(player);
+    var nav = document.createElement('div');
+    var up = document.createElement('button');
+    var down = document.createElement('button');
+    up.textContent = 'Previous video';
+    down.textContent = 'Next video';
+    if (MOBILE) {
+      nav.className = 'ytShortsCarouselShortsA11yNav';
+      nav.appendChild(up);
+      nav.appendChild(down);
+    } else {
+      var upWrap = document.createElement('div');
+      var downWrap = document.createElement('div');
+      upWrap.id = 'navigation-button-up';
+      downWrap.id = 'navigation-button-down';
+      upWrap.appendChild(up);
+      downWrap.appendChild(down);
+      nav.appendChild(upWrap);
+      nav.appendChild(downWrap);
+    }
+    player.appendChild(nav);
+
+    var slots = SHORTS.map(function (one) {
+      var slot = document.createElement('div');
+      slot.className = 'slot';
+      if (!MOBILE) {
+        // Desktop puts every Short's first frame behind its slot, upcoming ones too.
+        var thumb = document.createElement('div');
+        thumb.setAttribute('style', 'background-image:url("https://i.ytimg.com/vi/' + one.id + '/frame0.jpg");');
+        slot.appendChild(thumb);
+      }
+      player.appendChild(slot);
+      return slot;
+    });
+
+    var renderer = document.createElement(MOBILE ? 'shorts-video' : 'ytd-reel-video-renderer');
+    var playerChrome = document.createElement(MOBILE ? 'player-component' : 'ytd-player');
+    var video = fakeVideo();
+    var captions = document.createElement('div');
+    captions.className = 'ytp-caption-window-container';
+    playerChrome.appendChild(video);
+    playerChrome.appendChild(captions);
+    var meta = document.createElement('div');
+    renderer.appendChild(playerChrome);
+    renderer.appendChild(meta);
+
+    var blanks = [];
+    function render(i) {
+      meta.textContent = '';
+      var channel = document.createElement('div');
+      channel.textContent = SHORTS[i].channel;
+      var title = document.createElement('yt-shorts-video-title-view-model');
+      title.textContent = SHORTS[i].title;
+      blanks = [document.createTextNode('\n  '), document.createTextNode(' ')];
+      meta.appendChild(blanks[0]);
+      meta.appendChild(channel);
+      meta.appendChild(blanks[1]);
+      meta.appendChild(title);
+    }
+
+    function go(step) {
+      var next = at + step;
+      if (next < 0 || next >= SHORTS.length) return;
+      setTimeout(function () { blanks.forEach(function (b) { b.remove(); }); }, 20);
+      setTimeout(function () {
+        video.dispatchEvent(new Event('emptied'));
+        video.play();
+      }, 60);
+      setTimeout(function () { slots[next].appendChild(renderer); }, 100);
+      setTimeout(function () {
+        at = next;
+        history.replaceState(null, '', '/shorts/' + SHORTS[next].id);
+      }, 250);
+      setTimeout(function () {
+        meta.insertBefore(blanks[0], meta.firstChild);
+        meta.insertBefore(blanks[1], meta.lastChild);
+      }, 400);
+      setTimeout(function () { render(next); }, 700);
+    }
+    up.addEventListener('click', function () { upClicks++; go(-1); });
+    var upClicks = 0;
+    down.addEventListener('click', function () {
+      downClicks++;
+      if (tabHidden || (HIDDEN && Date.now() - shownAt < DEAF_MS)) { ignored++; return; }
+      go(1);
+    });
+    var downClicks = 0;
+
+    // Captions are drawn inside the player and change constantly.
+    var tick = 0;
+    setInterval(function () { captions.textContent = 'caption ' + (++tick); }, 90);
+
+    window.addEventListener('beforeunload', function () { history.replaceState(null, '', HOME); });
+    history.replaceState(null, '', '/shorts/' + SHORTS[0].id);
+    render(0);
+    slots[0].appendChild(renderer);
+  </script>
+
+  <script>document.write('<scr' + 'ipt src="/src/common.js?dev=1"><\/scr' + 'ipt>');</script>
+  <script>WF.detectSite = function () { return 'youtube'; };</script>
+  <script>document.write('<scr' + 'ipt src="/src/content.js?dev=1"><\/scr' + 'ipt>');</script>
+
+  <script>
+    (async function () {
+      var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+      var results = [];
+      function check(name, pass, detail) {
+        results.push((pass ? 'PASS  ' : 'FAIL  ') + name + (detail ? '   [' + detail + ']' : ''));
+      }
+      function id() { return location.pathname.split('/')[2]; }
+      function veil() { return renderer.querySelector(':scope > .wf-veil'); }
+
+      /* Every state the renderer goes through, with the Short in the address
+         bar at that moment, so a skip that happened twice shows up even if
+         the end state looks right. */
+      var timeline = [];
+      new MutationObserver(function () {
+        timeline.push(id() + ':' + (renderer.dataset.wfShort || '-'));
+      }).observe(renderer, { attributes: true, attributeFilter: ['data-wf-short'] });
+
+      async function waitFor(fn, ms) {
+        var started = performance.now();
+        while (performance.now() - started < (ms || 3000) && !fn()) await sleep(20);
+        return Math.round(performance.now() - started);
+      }
+
+      var mine = 0;                      // Next presses made by this test, not the filter
+      var mineUp = 0;                    // ...and Previous presses
+      function skips() { return downClicks - mine; }
+      function upSkips() { return upClicks - mineUp; }
+      function swipe(button) { if (button === down) mine++; else mineUp++; button.click(); }
+      function playingFor(ms) {
+        return sleep(ms).then(function () { return !video.paused; });
+      }
+
+      if (OCR) {
+        await ocrChecks();
+        return finish();
+      }
+      if (HIDDEN) {
+        await hiddenChecks();
+        return finish();
+      }
+      if (LATE) {
+        await lateChecks();
+        return finish();
+      }
+
+      /* A word added from the popup while the Short it matches is on screen.
+         A settings change used to leave that Short counted as already seen,
+         so it came back as a repeat: "Hidden", never skipped. */
+      async function lateChecks() {
+        await sleep(1500);
+        check('a Short that matches nothing yet plays', !renderer.dataset.wfShort && !video.paused);
+        setWords(['trump']);
+        var ms = await waitFor(function () { return id() === SHORTS[2].id; }, 5000);
+        check('adding a word it matches skips it, and the next match too', id() === SHORTS[2].id,
+          'after ' + ms + 'ms, on ' + id() + ', timeline ' + timeline.join(' '));
+        await sleep(1500);
+        check('...each once', skips() === 2 && id() === SHORTS[2].id, skips() + ' skips, on ' + id());
+
+        swipe(up);
+        await waitFor(function () { return id() === SHORTS[0].id && renderer.dataset.wfShort === 'hidden'; }, 5000);
+        setWords(['trump', 'cucumber']);
+        await sleep(3000);
+        check('scrolling up, a settings change keeps the direction: at the top it stays covered, not skipped down',
+          id() === SHORTS[0].id && renderer.dataset.wfShort === 'hidden' && skips() === 2,
+          'on ' + id() + ', ' + skips() + ' down, ' + upSkips() + ' up');
+        check('...saying "Hidden"', veil() && /^Hidden · “trump”/.test(veil().textContent),
+          veil() && veil().textContent);
+      }
+
+      /* A Short opened in a background tab. The player ignores Next there, so
+         pressing it then left the Short covered for good once the tab was
+         shown. */
+      async function hiddenChecks() {
+        await waitFor(function () { return renderer.dataset.wfShort === 'hidden'; });
+        await sleep(2000);
+        check('in a background tab, a matching Short is covered and paused',
+          renderer.dataset.wfShort === 'hidden' && video.paused, 'state=' + renderer.dataset.wfShort);
+        check('...and Next is not pressed while the tab is hidden', downClicks === 0 && id() === SHORTS[0].id,
+          downClicks + ' presses, on ' + id());
+
+        showTab();
+        var ms = await waitFor(function () { return id() === SHORTS[2].id; }, 8000);
+        check('once the tab is shown it is skipped, and so is the next match', id() === SHORTS[2].id,
+          'after ' + ms + 'ms, on ' + id() + ', timeline ' + timeline.join(' '));
+        await sleep(1500);
+        check('...each once', downClicks - ignored === 2 && id() === SHORTS[2].id,
+          (downClicks - ignored) + ' skips, on ' + id());
+        if (params.has('slow')) {
+          check('a press the player ignored is made again', ignored === 1, ignored + ' ignored');
+        } else {
+          check('...without pressing Next before the player takes it', ignored === 0, ignored + ' ignored');
+        }
+        check('...landing on a playing, uncovered Short', !video.paused && !veil());
+      }
+
+      /* Text in images: the first frame of each Short is read, since the
+         video itself can't be. */
+      async function ocrChecks() {
+        function frame(n) { return 'https://i.ytimg.com/vi/' + SHORTS[n].id + '/frame0.jpg'; }
+
+        if (BLUR) {
+          await waitFor(function () { return renderer.dataset.wfShort === 'hidden'; }, 1500);
+          check('blur until read: a Short is covered until its frame is read',
+            renderer.dataset.wfShort === 'hidden' && veil() && /Reading/.test(veil().textContent),
+            veil() && veil().textContent);
+          check('...and paused meanwhile', video.paused);
+          await waitFor(function () { return !renderer.dataset.wfShort; }, 3000);
+          check('...then uncovered and playing once read, when it says nothing blocked',
+            !renderer.dataset.wfShort && !video.paused);
+          return;
+        }
+
+        await waitFor(function () { return asked.length >= 3; }, 3000);
+        check("the Short on screen has its first frame read first", asked[0] === frame(0), asked[0]);
+        check('...and the next ones in the queue are read ahead',
+          asked.indexOf(frame(1)) !== -1 && asked.indexOf(frame(2)) !== -1, asked.length + ' asked');
+        check('...but not every Short in the queue', asked.indexOf(frame(3)) === -1);
+        check('reading a frame does not hold up a Short when blur is off',
+          !renderer.dataset.wfShort && !video.paused);
+
+        await sleep(READ_MS * 3);
+        swipe(down);
+        var seen = '';
+        await waitFor(function () {
+          var v = veil();
+          if (v && !seen) seen = v.textContent;
+          return id() === SHORTS[2].id;
+        }, 5000);
+        check('a Short whose first frame says a blocked word is skipped', id() === SHORTS[2].id,
+          'on ' + id() + ', timeline ' + timeline.join(' '));
+        check('...saying where the word was', /Skipping · “trump” in an image/.test(seen), seen);
+        await sleep(1000);
+        check('...and the next one plays', !renderer.dataset.wfShort && !video.paused);
+      }
+
+      function finish() {
+        history.replaceState(null, '', HOME);
+        document.getElementById('out').textContent = results.join('\n');
+        console.log('RESULTS\n' + results.join('\n'));
+      }
+
+      // --- a matching Short is skipped, once ---
+      var coveredMs = await waitFor(function () { return renderer.dataset.wfShort === 'hidden'; });
+      check('a matching Short is covered', renderer.dataset.wfShort === 'hidden', 'after ' + coveredMs + 'ms');
+      check('...and paused rather than torn out', video.paused && video.isConnected);
+      check('...with a placeholder that says so',
+        veil() && /Skipping · “trump”/.test(veil().textContent), veil() && veil().textContent);
+      check("...that hides the thumbnail behind it",
+        veil() && getComputedStyle(veil()).backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+        !/rgba\(.*, 0\.\d+\)$/.test(getComputedStyle(veil()).backgroundColor),
+        veil() && getComputedStyle(veil()).backgroundColor);
+
+      // --- two in a row with the same word ---
+      var pairMs = await waitFor(function () { return id() === SHORTS[2].id; }, 5000);
+      check('two matching Shorts in a row are both skipped', id() === SHORTS[2].id,
+        'after ' + pairMs + 'ms, on ' + id());
+      await sleep(1500);
+      check('...each once: no Short skipped twice, none skipped wrongly', skips() === 2 && id() === SHORTS[2].id,
+        skips() + ' skips, on ' + id() + ', timeline ' + timeline.join(' '));
+      check('...landing on one that is shown', !renderer.dataset.wfShort && !veil());
+      check('...and plays: pausing the skipped ones did not hold it paused', !video.paused);
+      check('a handle with "ad" in the middle of it does not count as the word "ad"',
+        !renderer.dataset.wfShort, 'channel ' + SHORTS[2].channel);
+
+      // --- a match further on ---
+      swipe(down);
+      await waitFor(function () { return id() === SHORTS[4].id; }, 4000);
+      await waitFor(function () { return !renderer.dataset.wfShort; }, 2000);
+      check('swiping on to another match skips that one too', id() === SHORTS[4].id, 'on ' + id());
+      check('...landing on a playing, uncovered Short', !video.paused && !veil());
+
+      // --- going back up past a skipped Short ---
+      swipe(up);
+      await waitFor(function () { return id() === SHORTS[2].id; }, 4000);
+      await sleep(1500);
+      check('swiping back up to a skipped Short skips it upwards', id() === SHORTS[2].id && upSkips() === 1,
+        'on ' + id() + ', ' + upSkips() + ' up, ' + skips() + ' down, timeline ' + timeline.join(' '));
+      check('...landing on a playing, uncovered Short', !video.paused && !veil());
+
+      // --- up to the top, where there's nothing above to skip to ---
+      swipe(up);
+      await waitFor(function () { return id() === SHORTS[0].id && renderer.dataset.wfShort === 'hidden'; }, 5000);
+      await sleep(3500);
+      check('going up past the pair skips the second upwards too', upSkips() === 2, upSkips() + ' up');
+      check('...and the first, at the top, stays covered and paused', id() === SHORTS[0].id &&
+        renderer.dataset.wfShort === 'hidden' && video.paused, 'on ' + id() + ', state=' + renderer.dataset.wfShort);
+      check('...saying "Hidden", without pressing Previous where there is nothing above',
+        veil() && /^Hidden · “trump”/.test(veil().textContent) && upSkips() === 2,
+        (veil() && veil().textContent) + ', ' + upSkips() + ' up');
+      check('...and never pressing Next on the way up', skips() === 3, skips() + ' down');
+
+      // --- what the popup counts ---
+      var stats = await window.__onMessage({ type: 'wf-stats' });
+      check('the popup counts the Shorts it skipped or covered', stats.counts.trump === 3, JSON.stringify(stats.counts));
+
+      // --- captions don't count as text ---
+      setWords(['caption']);
+      await sleep(1500);
+      check('a covered Short is uncovered and plays when its word is removed',
+        !renderer.dataset.wfShort && !video.paused);
+      check("the player's own captions are not read", !renderer.dataset.wfShort, 'state=' + renderer.dataset.wfShort);
+
+      setWords(['trump', 'ad']);
+      await waitFor(function () { return renderer.dataset.wfShort === 'hidden'; });
+      await sleep(1500);
+      check('a word added back covers it again, still at the top, not skipped down',
+        id() === SHORTS[0].id && renderer.dataset.wfShort === 'hidden' && skips() === 3,
+        'on ' + id() + ', ' + skips() + ' down');
+
+      var btn = veil() && veil().querySelector('.wf-veil-btn');
+      if (btn) btn.click();
+      await sleep(1500);
+      check('Show uncovers it and plays it', !renderer.dataset.wfShort && !veil() && !video.paused);
+      stats = await window.__onMessage({ type: 'wf-stats' });
+      check('...and the popup no longer counts it', !stats.counts.trump, JSON.stringify(stats.counts));
+
+      // --- and back down again ---
+      swipe(down);
+      await waitFor(function () { return id() === SHORTS[2].id; }, 5000);
+      await sleep(1500);
+      check('on the way down again, a Short skipped before is skipped again', id() === SHORTS[2].id &&
+        skips() === 4, 'on ' + id() + ', ' + skips() + ' down');
+      check('...landing on a playing, uncovered Short', !video.paused && !veil());
+
+      finish();
+    })();
+  </script>
+</body>
+
+</html>

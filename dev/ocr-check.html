@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <!-- The fake posts use real image-host URLs, because that is what decides
+       eligibility. This keeps them from ever being requested. -->
+  <meta http-equiv="Content-Security-Policy" content="img-src 'self' data:">
+  <title>Quiet Feed image-text check</title>
+  <link rel="stylesheet" href="../src/hidden.css">
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; padding: 16px; }
+    article { width: 320px; min-height: 140px; border: 1px solid #ccc; margin: 8px 0; }
+    article img { display: block; width: 160px; height: 90px; background: #9bc; }
+    #far { margin-top: 6000px; }
+    #out { white-space: pre; font-family: ui-monospace, Consolas, monospace; }
+  </style>
+</head>
+
+<body>
+  <h3>Results</h3>
+  <div id="out">running…</div>
+  <h3>Fake feed</h3>
+  <div id="feed"></div>
+
+  <script>
+    /* The content script runs for real; the background page is stubbed.
+       ?denied=1 — Firefox hasn't allowed the image hosts on this device.
+       ?off=1    — the setting is off. */
+    var params = new URLSearchParams(location.search);
+    var DENIED = params.has('denied');
+    var OFF = params.has('off');
+
+    var areas = {
+      local: { wfConfig: { words: ['election', 'trump', 'war'], enabled: true, ocr: !OFF, ocrBlur: true } },
+      sync: {}
+    };
+
+    function makeArea(name) {
+      return {
+        get: function (keys) {
+          var out = {};
+          (typeof keys === 'string' ? [keys] : (keys || [])).forEach(function (k) {
+            if (k in areas[name]) out[k] = areas[name][k];
+          });
+          return Promise.resolve(out);
+        },
+        set: function (obj) { Object.assign(areas[name], obj); return Promise.resolve(); },
+        remove: function (k) { delete areas[name][k]; return Promise.resolve(); }
+      };
+    }
+
+    /* What each picture "says". Anything not listed reads as nothing. */
+    var PICTURES = {
+      'https://i.redd.it/qf-meme.png': 'WHEN THE ELECTION\nRESULTS',
+      'https://i.redd.it/qf-cat.png': 'cute cat',
+      'https://i.redd.it/qf-swapped.png': 'TRUMP 2028',
+      'https://preview.redd.it/qf-far.png?width=640': 'election night',
+      'https://i.redd.it/qf-broken.png': null,         // the engine fails on this one
+      // A real URL from a real report: Reddit serves some users its previews from cf.preview.
+      'https://cf.preview.redd.it/its-sad-but-true-v0-5gh72hgnqcph1.jpeg?width=1080&crop=smart&auto=webp&s=1dd718b92b6318e5366be2eac8b89ecdc9f466a9': 'WHEN THE WAR AGAINST\nTHE MACHINES STARTS'
+    };
+
+    var calls = [];            // every image the page asked to have read
+    var outstanding = 0;
+    var maxOutstanding = 0;
+
+    window.browser = {
+      storage: {
+        local: makeArea('local'),
+        sync: makeArea('sync'),
+        onChanged: { addListener: function () { } }
+      },
+      runtime: {
+        onMessage: { addListener: function () { } },
+        sendMessage: function (msg) {
+          if (msg.type === 'wf-ocr-ready') return Promise.resolve({ granted: !DENIED });
+          if (msg.type !== 'wf-ocr') return Promise.resolve(undefined);
+          calls.push(msg.url);
+          outstanding++;
+          maxOutstanding = Math.max(maxOutstanding, outstanding);
+          return new Promise(function (resolve) {
+            setTimeout(function () {
+              outstanding--;
+              var text = PICTURES[msg.url];
+              resolve(text === null ? { text: '', error: 'engine failed' } : { text: text || '' });
+            }, 250);
+          });
+        }
+      }
+    };
+  </script>
+  <script src="../src/common.js"></script>
+  <script>
+    WF.detectSite = function () { return 'reddit'; };
+
+    var feed = document.getElementById('feed');
+
+    function post(id, text, srcs) {
+      var a = document.createElement('article');
+      a.id = id;
+      var h = document.createElement('h3');
+      h.textContent = text;
+      a.appendChild(h);
+      srcs.forEach(function (src) {
+        var img = document.createElement('img');
+        img.setAttribute('src', src);
+        img.alt = '';
+        a.appendChild(img);
+      });
+      feed.appendChild(a);
+      return a;
+    }
+
+    var meme = post('meme', 'Look at this one', ['https://i.redd.it/qf-meme.png']);
+    var cat = post('cat', 'My sunday afternoon', ['https://i.redd.it/qf-cat.png']);
+    var titled = post('titled', 'Trump said what now', ['https://i.redd.it/qf-titled.png']);
+    var avatar = post('avatar', 'Just an avatar here', ['https://styles.redditmedia.com/t5_1/avatar.png']);
+    var broken = post('broken', 'Nothing to see', ['https://i.redd.it/qf-broken.png']);
+    var cfPost = post('cf', "It's sad but true", ['https://cf.preview.redd.it/its-sad-but-true-v0-5gh72hgnqcph1.jpeg?width=1080&crop=smart&auto=webp&s=1dd718b92b6318e5366be2eac8b89ecdc9f466a9']);
+
+    var loose = document.createElement('div');       // an image outside any post
+    var looseImg = document.createElement('img');
+    looseImg.setAttribute('src', 'https://i.redd.it/qf-loose.png');
+    loose.appendChild(looseImg);
+    feed.appendChild(loose);
+
+    var far = post('far', 'Scroll down for this', ['https://preview.redd.it/qf-far.png?width=640']);
+  </script>
+  <script src="../src/content.js"></script>
+  <script>
+    function blurred(img) { return /blur/.test(getComputedStyle(img).filter); }
+    function blurredEl(el) { return /blur/.test(getComputedStyle(el).filter); }
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    function frame() { return new Promise(function (r) { requestAnimationFrame(function () { r(); }); }); }
+
+    async function until(fn, ms) {
+      var t0 = Date.now();
+      while (Date.now() - t0 < (ms || 5000)) {
+        if (fn()) return true;
+        await sleep(50);
+      }
+      return !!fn();
+    }
+
+    var results = [];
+    function check(name, ok, detail) {
+      results.push((ok ? 'PASS' : 'FAIL') + '  ' + name + (detail ? '   [' + detail + ']' : ''));
+    }
+
+    (async function () {
+      var img = function (el) { return el.querySelector('img'); };
+
+      if (OFF || DENIED) {
+        await sleep(1500);
+        var why = OFF ? 'setting off' : 'not allowed on this device';
+        check(why + ': nothing is blurred', !blurred(img(meme)) && !blurred(img(cat)));
+        check(why + ': no blur attribute on the page', !document.documentElement.hasAttribute('data-wf-ocr-blur'));
+        check(why + ': no picture is sent to be read', calls.length === 0, calls.join(', '));
+        check(why + ': a title match still hides', titled.dataset.wfState === 'hidden');
+        check(why + ': a picture-only match does not', !meme.dataset.wfState);
+        finish();
+        return;
+      }
+
+      // The blur has to be there from the start, before any read comes back.
+      await frame();
+      check('an unread picture in a post is blurred at once', blurred(img(meme)) && blurred(img(cat)));
+      check('the page names the groups the blur covers',
+        /\bredditPosts\b/.test(document.documentElement.getAttribute('data-wf-ocr-blur') || ''));
+      check('a picture outside any post is never blurred', !blurred(looseImg));
+      check('an avatar is never blurred', !blurred(img(avatar)));
+
+      var hid = await until(function () { return meme.dataset.wfState === 'hidden'; });
+      check('a post is hidden for a word only in its picture', hid);
+      var label = meme.querySelector('.wf-veil-label');
+      check('...and the placeholder says it was in an image',
+        !!label && /in an image/.test(label.textContent), label && label.textContent);
+
+      var clear = await until(function () { return !blurred(img(cat)); });
+      check('a picture with innocent text is unblurred once read', clear);
+      check('...and its post stays visible', !cat.dataset.wfState);
+
+      check('a post hidden by its title never has its picture read',
+        calls.indexOf('https://i.redd.it/qf-titled.png') === -1, calls.join(', '));
+      check('...and its title match isn\'t labelled as an image one',
+        !/in an image/.test((titled.querySelector('.wf-veil-label') || {}).textContent || ''));
+      check('an avatar is never sent to be read',
+        calls.every(function (u) { return u.indexOf('redditmedia') === -1; }));
+      check('a picture outside any post is never sent', calls.indexOf('https://i.redd.it/qf-loose.png') === -1);
+
+      // Brought on screen first: in a short frame it starts beyond the read-ahead.
+      cfPost.scrollIntoView();
+      var cfHidden = await until(function () { return cfPost.dataset.wfState === 'hidden'; }, 8000);
+      window.scrollTo(0, 0);
+      check('a picture from cf.preview.redd.it is blurred, read and matched', cfHidden,
+        (cfPost.querySelector('.wf-veil-label') || {}).textContent);
+
+      var failedOpen = await until(function () { return !blurred(img(broken)); });
+      check('a picture the engine fails on is unblurred, not stuck', failedOpen);
+      check('...and its post is left alone', !broken.dataset.wfState);
+
+      check('a picture far below the screen is not read yet',
+        calls.indexOf('https://preview.redd.it/qf-far.png?width=640') === -1);
+      check('at most two pictures are read at once', maxOutstanding <= 2, 'peak ' + maxOutstanding);
+
+      /* YouTube re-stamps a thumbnail in place. The new picture must be
+         blurred from its first frame, not from the next scan. */
+      img(cat).setAttribute('src', 'https://i.redd.it/qf-swapped.png');
+      await Promise.resolve();          // the observer runs as a microtask
+      await frame();
+      check('a swapped picture is blurred before the next frame', blurred(img(cat)));
+      var swappedHidden = await until(function () { return cat.dataset.wfState === 'hidden'; }, 6000);
+      check('...then read, and its post hidden for the new picture', swappedHidden);
+
+      // Show on a post hidden for its picture: you asked to see it.
+      meme.querySelector('.wf-veil-btn').click();
+      await frame();
+      check('revealing a post unblurs its picture', !blurred(img(meme)) && meme.dataset.wfState === 'revealed');
+
+      far.scrollIntoView();
+      var farRead = await until(function () {
+        return calls.indexOf('https://preview.redd.it/qf-far.png?width=640') !== -1;
+      }, 4000);
+      check('scrolling a picture near the screen gets it read', farRead);
+      var farHidden = await until(function () { return far.dataset.wfState === 'hidden'; });
+      check('...and hidden when it matches', farHidden);
+      window.scrollTo(0, 0);
+
+      var once = calls.filter(function (u) { return u === 'https://i.redd.it/qf-meme.png'; }).length;
+      check('each picture is read once', once === 1, once + ' reads');
+
+      /* X paints photos as a background on a sibling div; the parent must blur. */
+      if (CSS.supports('selector(:has(> img))')) {
+        document.documentElement.setAttribute('data-wf-ocr-blur', 'x');
+        var tweet = document.createElement('article');
+        var photo = document.createElement('div');
+        var bg = document.createElement('div');
+        var xi = document.createElement('img');
+        xi.setAttribute('src', 'https://pbs.twimg.com/media/QF.jpg?format=jpg&name=small');
+        photo.appendChild(bg);
+        photo.appendChild(xi);
+        tweet.appendChild(photo);
+        document.body.appendChild(tweet);
+        await frame();
+        check('X: the photo\'s wrapper is blurred, not just the invisible img', blurredEl(photo));
+        xi.setAttribute('data-wf-read', xi.getAttribute('src'));
+        await frame();
+        check('X: ...and unblurred once read', !blurredEl(photo));
+        tweet.remove();
+      }
+
+      await cssAgrees();
+      unitChecks();
+      finish();
+    })();
+
+    /* hidden.css blurs by [src^=] prefix inside each group's selectors; the
+       script reads by WF.OCR_IMAGES inside WF.SCOPES. Any drift means a
+       picture blurred that is never read. */
+    async function cssAgrees() {
+      var css = await fetch('../src/hidden.css').then(function (r) { return r.text(); });
+      var problems = [];
+      Object.keys(WF.SCOPES).forEach(function (site) {
+        WF.SCOPES[site].forEach(function (group) {
+          var start = css.indexOf('html[data-wf-ocr-blur~="' + group.key + '"] :is(');
+          if (start === -1) { problems.push('no blur rule for ' + group.key); return; }
+          var rule = css.slice(start, css.indexOf('\n', start));
+          var list = rule.slice(rule.indexOf(':is(') + 4, rule.indexOf(')'));
+          var sels = list.split(',').map(function (s) { return s.trim(); });
+          var want = group.selectors.slice().sort().join('|');
+          if (sels.slice().sort().join('|') !== want) problems.push(group.key + ' selectors differ');
+          WF.OCR_IMAGES.forEach(function (p) {
+            if (rule.indexOf('img[src^="' + p + '"]') === -1) problems.push(group.key + ' lacks ' + p);
+          });
+        });
+      });
+      var prefixes = css.match(/img\[src\^="([^"]+)"\]/g).map(function (m) { return m.slice(10, -2); });
+      prefixes.forEach(function (p) {
+        if (WF.OCR_IMAGES.indexOf(p) === -1) problems.push('css blurs ' + p + ', which is never read');
+      });
+      check('hidden.css blurs exactly the pictures the script reads', !problems.length, problems.join('; '));
+    }
+
+    function unitChecks() {
+      var yes = [
+        'https://i.ytimg.com/vi/abc123/hqdefault.jpg?sqp=x&rs=y',
+        'https://i.ytimg.com/vi_webp/abc123/mqdefault.webp',
+        'https://i.redd.it/a1b2.jpeg',
+        'https://preview.redd.it/a1b2.png?width=640&format=png&auto=webp&s=abc',
+        'https://external-preview.redd.it/x.jpg?auto=webp&s=1',
+        'https://cf.preview.redd.it/its-sad-but-true-v0-5gh72hgnqcph1.jpeg?width=1080&crop=smart&auto=webp&s=1dd718b92b6318e5366be2eac8b89ecdc9f466a9',
+        'https://pbs.twimg.com/media/GxYz.jpg?format=jpg&name=small',
+        'https://pbs.twimg.com/card_img/1/abc?format=jpg&name=600x314'
+      ];
+      var no = [
+        'https://yt3.ggpht.com/avatar=s88',                         // YouTube avatar
+        'https://i.ytimg.com/an_webp/abc/mqdefault_6s.webp',         // animated hover preview
+        'https://pbs.twimg.com/profile_images/1/x_normal.jpg',       // X avatar
+        'https://abs.twimg.com/emoji/v2/svg/1f600.svg',
+        'https://styles.redditmedia.com/t5_1/styles/icon.png',       // subreddit icon
+        'https://i.redd.it.example.com/x.png',
+        'https://i.redd.it/',
+        'http://i.redd.it/x.png',
+        'javascript:alert(1)',
+        'https://i.redd.it/x.png" onerror="x',
+        ''
+      ];
+      var wrongYes = yes.filter(function (u) { return !WF.ocrImageUrl(u); });
+      var wrongNo = no.filter(function (u) { return WF.ocrImageUrl(u); });
+      check('post pictures on all three sites qualify', !wrongYes.length, wrongYes.join(', '));
+      check('avatars, icons, previews and look-alike hosts don\'t', !wrongNo.length, wrongNo.join(', '));
+
+      var hosts = WF.OCR_IMAGES.map(function (p) { return new URL(p).host; });
+      var covered = hosts.every(function (h) {
+        return WF.OCR_ORIGINS.indexOf('https://' + h + '/*') !== -1;
+      });
+      check('the permission asked for covers every image host read', covered);
+
+      var keys = [
+        WF.ocrImageKey('https://i.redd.it/5gh72hgnqcph1.jpeg'),
+        WF.ocrImageKey('https://preview.redd.it/its-sad-but-true-v0-5gh72hgnqcph1.jpeg?width=640'),
+        WF.ocrImageKey('https://cf.preview.redd.it/its-sad-but-true-v0-5gh72hgnqcph1.jpeg?width=1080&crop=smart&auto=webp&s=1dd718b92b6318e5366be2eac8b89ecdc9f466a9')
+      ];
+      check('one Reddit picture on i., preview. and cf.preview. is read once', keys[0] === keys[1] && keys[1] === keys[2], keys.join(' , '));
+      check('each image host maps to its own permission',
+        WF.ocrOriginFor('https://cf.preview.redd.it/its-sad-but-true-v0-5gh72hgnqcph1.jpeg?width=1080&crop=smart&auto=webp&s=1dd718b92b6318e5366be2eac8b89ecdc9f466a9') === 'https://cf.preview.redd.it/*' &&
+        WF.OCR_ORIGINS.indexOf(WF.ocrOriginFor('https://pbs.twimg.com/media/x.jpg')) !== -1);
+    }
+
+    function finish() {
+      var pass = results.filter(function (r) { return r.indexOf('PASS') === 0; }).length;
+      results.push('\n' + pass + ' passed, ' + (results.length - pass) + ' failed');
+      document.getElementById('out').textContent = results.join('\n');
+      window.__done = true;
+    }
+  </script>
+</body>
+
+</html>

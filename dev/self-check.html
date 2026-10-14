@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Quiet Feed self-check</title>
+  <link rel="stylesheet" href="../src/hidden.css">
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; padding: 16px; }
+    article { width: 300px; height: 200px; border: 1px solid #ccc; margin: 8px 0; }
+    #out { white-space: pre; font-family: ui-monospace, Consolas, monospace; }
+  </style>
+</head>
+
+<body>
+  <h3>Fake feed</h3>
+  <div id="feed"></div>
+  <h3>Results</h3>
+  <div id="out">running…</div>
+
+  <script>
+    // Minimal WebExtension stubs so the real files can run in a plain page.
+    /* Two real in-memory storage areas, so the sync/local preference logic is
+       exercised rather than stubbed past. Seeded in local only, which is also
+       what an existing install looks like before its first save. */
+    const areas = { local: { wfConfig: { words: ['trump', 'the office'], enabled: true } }, sync: {} };
+    window.__areas = areas;
+
+    function makeArea(name) {
+      return {
+        get: function (keys) {
+          const out = {};
+          (typeof keys === 'string' ? [keys] : (keys || [])).forEach(function (k) {
+            if (k in areas[name]) out[k] = areas[name][k];
+          });
+          return Promise.resolve(out);
+        },
+        set: function (obj) { Object.assign(areas[name], obj); return Promise.resolve(); },
+        remove: function (k) { delete areas[name][k]; return Promise.resolve(); }
+      };
+    }
+
+    window.browser = {
+      storage: {
+        local: makeArea('local'),
+        sync: makeArea('sync'),
+        onChanged: { addListener: function () { } }
+      },
+      runtime: { onMessage: { addListener: function () { } } },
+      tabs: { query: function () { return Promise.resolve([]); }, sendMessage: function () { return Promise.resolve(null); } }
+    };
+    window.addEventListener('error', function (e) { console.error('PAGE-ERROR: ' + e.message); });
+  </script>
+
+  <!-- Loaded with the page's query string appended so editing src/ during
+       development can't be masked by a cached copy of the old script. -->
+  <script>document.write('<scr' + 'ipt src="../src/common.js' + (location.search || '?dev=1') + '"><\/scr' + 'ipt>');</script>
+
+  <script>
+    // Pretend we're on Reddit so content.js activates, but keep the real
+    // implementation so its host matching can still be tested.
+    WF.realDetectSite = WF.detectSite;
+    WF.detectSite = function () { return 'reddit'; };
+
+    // Build the fake feed before content.js boots.
+    var feed = document.getElementById('feed');
+
+    var bad = document.createElement('article');
+    bad.textContent = 'Trump rally highlights, 4k upvotes';
+    var player = document.createElement('shreddit-player-2');
+    player.style.display = 'block';
+    player.style.height = '120px';
+    var root = player.attachShadow({ mode: 'open' });
+    var vid = document.createElement('video');
+    vid.setAttribute('autoplay', '');
+    vid.style.height = '120px';
+    root.appendChild(vid);
+    bad.appendChild(player);
+    feed.appendChild(bad);
+
+    var good = document.createElement('article');
+    good.textContent = 'A trumpet solo from the trumpeter';
+    feed.appendChild(good);
+
+    /* Regression: a feed card that hydrates AFTER the first scan, whose new
+       text happens to be the same LENGTH as the placeholder text it replaced.
+       This is what YouTube's staged rendering does, and it must still match. */
+    var late = document.createElement('article');
+    late.textContent = 'harmless filler text here';   // 25 chars, no match
+    feed.appendChild(late);
+
+    window.__lateBefore = late.textContent.length;
+    setTimeout(function () {
+      late.textContent = 'trump is here now ok fine';  // also 25 chars, matches
+      window.__lateAfter = late.textContent.length;
+    }, 300);
+
+    /* Regression: YouTube's lockup cards carry the title on title/aria-label
+       while the visible text is an attributed string that can populate late.
+       A card must match on the attribute alone. */
+    var attrOnly = document.createElement('article');
+    var heading = document.createElement('h3');
+    heading.setAttribute('title', 'A The Office retrospective');
+    heading.setAttribute('aria-label', 'A The Office retrospective');
+    heading.textContent = 'Video';           // visible text lacks the phrase
+    attrOnly.appendChild(heading);
+    feed.appendChild(attrOnly);
+
+    /* A Reddit comment, which is its own switchable group. */
+    var comment = document.createElement('shreddit-comment');
+    comment.textContent = 'honestly trump said the same thing last week';
+    feed.appendChild(comment);
+
+    /* Regression: Reddit parts that set visibility: visible on themselves —
+       up front, or when a lazy image finishes loading after the post is hidden —
+       escape an ancestor's visibility: hidden. The post must stay hidden anyway. */
+    var escaper = document.createElement('article');
+    escaper.id = 'escaper';
+    var escHeader = document.createElement('div');
+    escHeader.className = 'esc-header';
+    escHeader.style.visibility = 'visible';
+    escHeader.textContent = 'u/someone';
+    var escTitle = document.createElement('h3');
+    escTitle.textContent = ' trump gallery post';   // leading space: this post tests hiding, not matching
+    var escMedia = document.createElement('div');
+    escMedia.className = 'esc-media';
+    escMedia.style.height = '60px';
+    escMedia.textContent = 'image';
+    escaper.appendChild(escHeader);
+    escaper.appendChild(escTitle);
+    escaper.appendChild(escMedia);
+    feed.appendChild(escaper);
+    setTimeout(function () { escMedia.style.visibility = 'visible'; }, 400);
+
+    /* Regression: textContent runs neighbouring elements together with nothing
+       in between, so a title that starts right after an author name reads as
+       "u/someonetrump" and whole-word matching misses the word. */
+    var glued = document.createElement('article');
+    glued.id = 'glued';
+    var gluedBy = document.createElement('div');
+    gluedBy.textContent = 'by u/someone';
+    var gluedTitle = document.createElement('h3');
+    gluedTitle.textContent = 'trump glued title';
+    glued.appendChild(gluedBy);
+    glued.appendChild(gluedTitle);
+    feed.appendChild(glued);
+
+    /* Regression: a timestamp's hover text is a full date — Reddit's reads like
+       "Thursday, September 11, 2026 at 3:04 PM" — so blocking "September 11"
+       hid every post published that day. Timestamps are metadata, not what a
+       post says. The harness list has no date in it, so "the office" stands in. */
+    var dated = document.createElement('article');
+    dated.id = 'dated';
+    var datedTitle = document.createElement('h3');
+    datedTitle.textContent = 'an ordinary post about gardening';
+    var datedAgo = document.createElement('faceplate-timeago');
+    var datedTime = document.createElement('time');
+    datedTime.setAttribute('datetime', '2026-09-11T15:04:12Z');
+    datedTime.setAttribute('title', 'Thursday, the office, 2026 at 3:04 PM');
+    datedTime.textContent = 'the office ago';
+    datedAgo.appendChild(datedTime);
+    dated.appendChild(datedTitle);
+    dated.appendChild(datedAgo);
+    feed.appendChild(dated);
+
+    /* Records when the filter actually acts on each element, so a check that
+       fails on timing can be told apart from one that fails on logic. */
+    window.__timeline = [];
+    new MutationObserver(function (records) {
+      records.forEach(function (r) {
+        var el = r.target;
+        window.__timeline.push(Math.round(performance.now()) + 'ms ' +
+          el.tagName.toLowerCase() + (el === late ? '(late)' : '') +
+          ' -> ' + el.dataset.wfState);
+      });
+    }).observe(document.documentElement, {
+      attributes: true, subtree: true, attributeFilter: ['data-wf-state']
+    });
+
+    window.__badHeight = bad.getBoundingClientRect().height;
+  </script>
+
+  <script>document.write('<scr' + 'ipt src="../src/content.js' + (location.search || '?dev=1') + '"><\/scr' + 'ipt>');</script>
+
+  <script>
+    setTimeout(async function () {
+      var bad = document.querySelectorAll('#feed article')[0];
+      var good = document.querySelectorAll('#feed article')[1];
+
+      function deepVideos(node, found) {
+        found = found || [];
+        node.querySelectorAll('video, audio').forEach(function (v) { found.push(v); });
+        node.querySelectorAll('*').forEach(function (el) { if (el.shadowRoot) deepVideos(el.shadowRoot, found); });
+        return found;
+      }
+
+      var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+      /* Wait for the filter to act, rather than sampling at a fixed moment.
+         Sampling made these checks flaky: the filter is driven by mutations
+         with a backstop sweep behind it, so "not yet" and "never" look the
+         same at any single instant. A word that genuinely matches is hidden
+         well inside this window; one that doesn't never is. */
+      async function waitForState(el, state, ms) {
+        var started = performance.now();
+        while (performance.now() - started < (ms || 2500) && el.dataset.wfState !== state) {
+          await sleep(20);
+        }
+        return Math.round(performance.now() - started);
+      }
+
+      var results = [];
+      function check(name, pass, detail) {
+        results.push((pass ? 'PASS  ' : 'FAIL  ') + name + (detail ? '   [' + detail + ']' : ''));
+      }
+
+      var h = bad.getBoundingClientRect().height;
+      check('matching post is hidden', bad.dataset.wfState === 'hidden', 'state=' + bad.dataset.wfState);
+      check('matched word recorded', bad.dataset.wfWord === 'trump', 'word=' + bad.dataset.wfWord);
+      check('still in the DOM', bad.isConnected === true);
+      check('keeps its layout height', Math.abs(h - window.__badHeight) < 2, h + ' vs ' + window.__badHeight);
+      check('visually hidden', getComputedStyle(bad).visibility === 'hidden', getComputedStyle(bad).visibility);
+      check('no video left anywhere inside', deepVideos(bad).length === 0, deepVideos(bad).length + ' found');
+      check('player element removed', bad.querySelector('shreddit-player-2') === null);
+      check('spacer left in its place', bad.querySelector('.wf-spacer') !== null);
+      check('placeholder drawn', bad.querySelector('.wf-veil') !== null);
+      check('placeholder is visible', bad.querySelector('.wf-veil') && getComputedStyle(bad.querySelector('.wf-veil')).visibility === 'visible');
+      check('non-matching post untouched', !good.hasAttribute('data-wf-state'));
+      check('"trumpet" did not match', good.dataset.wfState === undefined);
+
+      var late = document.querySelectorAll('#feed article')[2];
+      var lateMs = await waitForState(late, 'hidden');
+      check('same-length rehydration still matches',
+        late.dataset.wfState === 'hidden',
+        'after ' + lateMs + 'ms, lengths ' + window.__lateBefore + '/' + window.__lateAfter);
+
+      var attrOnly = document.querySelectorAll('#feed article')[3];
+      check('title carried only in an attribute still matches',
+        attrOnly.dataset.wfState === 'hidden',
+        'state=' + attrOnly.dataset.wfState + ', word=' + attrOnly.dataset.wfWord);
+
+      var btn = bad.querySelector('.wf-veil-btn');
+      if (btn) btn.click();
+      check('Show button reveals', bad.dataset.wfState === 'revealed' && bad.querySelector('.wf-veil') === null);
+
+      // --- reacting to a post whose text is rewritten in place ---
+      var live = document.createElement('article');
+      live.textContent = 'nothing of interest in this one at all';
+      document.getElementById('feed').appendChild(live);
+      await sleep(700);                       // settle, and be cached as a miss
+      var settledClean = live.dataset.wfState === undefined;
+
+      live.textContent = 'trump turns up in the rewritten text';
+      var liveMs = await waitForState(live, 'hidden');
+
+      check('it was genuinely unmatched beforehand', settledClean);
+      check('an in-place text rewrite is noticed', live.dataset.wfState === 'hidden',
+        'after ' + liveMs + 'ms');
+
+      // --- elements the site reuses for different content ---
+      /* Regression: YouTube re-stamps a renderer with a different video, and X
+         moves a virtual-list cell to a different post. The hidden state stayed
+         on the element, so innocent content inherited it until Preview
+         re-tested everything. */
+      var slot = document.createElement('article');
+      var slotTitle = document.createElement('span');
+      slotTitle.textContent = 'trump in the original video title';
+      slot.appendChild(slotTitle);
+      document.getElementById('feed').appendChild(slot);
+      await waitForState(slot, 'hidden');
+      check('a reusable slot starts out hidden', slot.dataset.wfState === 'hidden');
+
+      var slotStates = [];
+      new MutationObserver(function () { slotStates.push(slot.dataset.wfState); })
+        .observe(slot, { attributes: true, attributeFilter: ['data-wf-state'] });
+
+      slotTitle.textContent = 'trump in the original video title, 12k views';
+      await sleep(900);
+      check('a hidden post that only gains unrelated text stays hidden',
+        slot.dataset.wfState === 'hidden' && slotStates.length === 0, JSON.stringify(slotStates));
+
+      slotTitle.textContent = 'loading';
+      await sleep(60);
+      slotTitle.textContent = 'trump in the original video title, 12k views';
+      await sleep(900);
+      check('a momentary half-render does not flash the post',
+        slot.dataset.wfState === 'hidden' && slotStates.length === 0, JSON.stringify(slotStates));
+
+      slotTitle.textContent = 'a relaxing video about baking bread';
+      var recycledMs = await waitForState(slot, undefined);
+      check('a reused slot now showing an innocent post is un-hidden',
+        slot.dataset.wfState === undefined, 'after ' + recycledMs + 'ms');
+      check('...with its placeholder and pinned height gone',
+        slot.querySelector('.wf-veil') === null && slot.style.minHeight === '');
+
+      slotTitle.textContent = 'another trump clip';
+      await waitForState(slot, 'hidden');
+      check('reused again for a matching post, it is hidden again', slot.dataset.wfState === 'hidden');
+
+      slotTitle.textContent = 'the office bloopers';
+      await sleep(900);
+      check('reused for a different blocked word, it stays hidden and says which',
+        slot.dataset.wfState === 'hidden' && slot.dataset.wfWord === 'the office' &&
+        /the office/.test((slot.querySelector('.wf-veil-label') || {}).textContent || ''),
+        'word=' + slot.dataset.wfWord);
+
+      slot.querySelector('.wf-veil-btn').click();
+      slotTitle.textContent = 'the office bloopers, 5 views';
+      await sleep(900);
+      check('a revealed post that only gains unrelated text stays revealed',
+        slot.dataset.wfState === 'revealed');
+
+      slotTitle.textContent = 'trump somewhere else entirely';
+      await waitForState(slot, 'hidden');
+      check('a revealed slot reused for a different match is hidden again',
+        slot.dataset.wfState === 'hidden', 'state=' + slot.dataset.wfState);
+
+      // --- Reddit posts vs comments ---
+      var comment = document.querySelector('#feed shreddit-comment');
+      check('a matching comment is hidden when comments are on',
+        comment.dataset.wfState === 'hidden', 'state=' + comment.dataset.wfState);
+
+      var postsOnly = WF.normalize({ sites: { redditPosts: true, redditComments: false } });
+      var postsSel = WF.selectorsFor('reddit', postsOnly);
+      check('comments drop out when switched off', postsSel.indexOf('shreddit-comment') === -1);
+      check('posts survive that', postsSel.indexOf('shreddit-post') !== -1);
+      check('old.reddit posts and comments are told apart',
+        postsSel.indexOf('div.thing.link') !== -1 && postsSel.indexOf('div.thing.comment') === -1);
+
+      var commentsOnly = WF.normalize({ sites: { redditPosts: false, redditComments: true } });
+      var commentsSel = WF.selectorsFor('reddit', commentsOnly);
+      check('comments only, when posts are off',
+        commentsSel.indexOf('shreddit-comment') !== -1 && commentsSel.indexOf('shreddit-post') === -1);
+
+      check('both off leaves nothing to scan',
+        WF.selectorsFor('reddit', WF.normalize({
+          sites: { redditPosts: false, redditComments: false }
+        })).length === 0);
+
+      check('YouTube is unaffected by the Reddit split',
+        WF.selectorsFor('youtube', postsOnly).indexOf('ytd-rich-item-renderer') !== -1);
+
+      // --- YouTube videos vs comments ---
+      var videosOnly = WF.normalize({ sites: { youtubeVideos: true, youtubeComments: false } });
+      var videosSel = WF.selectorsFor('youtube', videosOnly);
+      check('YouTube comments drop out when switched off',
+        videosSel.indexOf('ytd-comment-thread-renderer') === -1 &&
+        videosSel.indexOf('ytd-comment-view-model') === -1);
+      check('videos survive that', videosSel.indexOf('ytd-rich-item-renderer') !== -1);
+      check('community posts count as videos, not comments',
+        videosSel.indexOf('ytd-post-renderer') !== -1);
+
+      var ytCommentsOnly = WF.normalize({ sites: { youtubeVideos: false, youtubeComments: true } });
+      var ytCommentsSel = WF.selectorsFor('youtube', ytCommentsOnly);
+      check('YouTube comments only, when videos are off',
+        ytCommentsSel.indexOf('ytd-comment-thread-renderer') !== -1 &&
+        ytCommentsSel.indexOf('ytd-rich-item-renderer') === -1);
+      check('replies are covered too, not just top-level comments',
+        ytCommentsSel.indexOf('ytd-comment-view-model') !== -1);
+      check('both YouTube halves off leaves nothing to scan',
+        WF.selectorsFor('youtube', WF.normalize({
+          sites: { youtubeVideos: false, youtubeComments: false }
+        })).length === 0);
+      check('Reddit is unaffected by the YouTube split',
+        WF.selectorsFor('reddit', videosOnly).indexOf('shreddit-post') !== -1);
+
+      // --- mobile markup ---
+      // m.youtube.com's ytm- elements sit in the same groups as the desktop
+      // ytd- ones, so one toggle covers a phone and a laptop alike.
+      check('mobile YouTube videos ride along with the desktop ones',
+        videosSel.indexOf('ytm-video-with-context-renderer') !== -1 &&
+        videosSel.indexOf('ytm-compact-video-renderer') !== -1 &&
+        videosSel.indexOf('ytm-rich-item-renderer') !== -1);
+      check('mobile YouTube comments ride along too',
+        ytCommentsSel.indexOf('ytm-comment-thread-renderer') !== -1 &&
+        ytCommentsSel.indexOf('ytm-comment-renderer') !== -1);
+      check('mobile comments are not counted as videos',
+        videosSel.indexOf('ytm-comment-thread-renderer') === -1);
+      check('ytm-media-item stays out, being nested inside the others',
+        videosSel.indexOf('ytm-media-item') === -1);
+      check('a post page’s recommendations count as posts, not comments',
+        postsSel.indexOf('reddit-pdp-right-rail-post') !== -1 &&
+        commentsSel.indexOf('reddit-pdp-right-rail-post') === -1);
+
+      // --- X ---
+      check('x.com is recognised',
+        WF.realDetectSite('x.com') === 'x' && WF.realDetectSite('www.x.com') === 'x');
+      check('twitter.com still maps to X', WF.realDetectSite('twitter.com') === 'x');
+      check('lookalike domains are not X',
+        WF.realDetectSite('notx.com') === null &&
+        WF.realDetectSite('x.com.example.net') === null);
+      check('the other hosts still resolve',
+        WF.realDetectSite('www.youtube.com') === 'youtube' &&
+        WF.realDetectSite('old.reddit.com') === 'reddit');
+
+      var xSel = WF.selectorsFor('x', WF.normalize({}));
+      check('X is on by default', xSel.length > 0);
+      /* Regression: these were once written as article[data-testid="tweet"],
+         which matches nothing when signed out — the only state a visitor
+         without an account is ever in. */
+      check('X matches a plain article, not just the signed-in markup',
+        xSel.indexOf('article') !== -1);
+      check('no X selector demands a signed-in-only attribute',
+        xSel.every(function (s) { return s.indexOf('data-testid="tweet"') === -1; }));
+      check('trends and link cards are covered too',
+        xSel.indexOf('div[data-testid="trend"]') !== -1 &&
+        xSel.indexOf('div[role="link"]') !== -1);
+      check('X can be switched off',
+        WF.selectorsFor('x', WF.normalize({ sites: { x: false } })).length === 0);
+      check('switching X off leaves the other sites alone',
+        WF.selectorsFor('reddit', WF.normalize({ sites: { x: false } })).length > 0 &&
+        WF.selectorsFor('youtube', WF.normalize({ sites: { x: false } })).length > 0);
+      check("X's video player is treated as media", /videoPlayer/.test(WF.MEDIA.x));
+
+      // --- migrating the old single switches ---
+      check('an old Reddit "off" migrates to both being off',
+        WF.normalize({ sites: { reddit: false } }).sites.redditPosts === false &&
+        WF.normalize({ sites: { reddit: false } }).sites.redditComments === false);
+      check('an old Reddit "on" stays on',
+        WF.normalize({ sites: { reddit: true } }).sites.redditPosts === true &&
+        WF.normalize({ sites: { reddit: true } }).sites.redditComments === true);
+      check('an old YouTube "off" migrates to both being off',
+        WF.normalize({ sites: { youtube: false } }).sites.youtubeVideos === false &&
+        WF.normalize({ sites: { youtube: false } }).sites.youtubeComments === false);
+      check('an old YouTube "on" stays on',
+        WF.normalize({ sites: { youtube: true } }).sites.youtubeVideos === true &&
+        WF.normalize({ sites: { youtube: true } }).sites.youtubeComments === true);
+      check('both old switches migrate together',
+        (function () {
+          var m = WF.normalize({ sites: { youtube: false, reddit: false } });
+          return m.sites.youtubeVideos === false && m.sites.redditComments === false &&
+            m.sites.youtube === undefined && m.sites.reddit === undefined;
+        })());
+
+      // --- spotting entries that can never match ---
+      check('a plain word is valid', WF.isValid('trump', 'word'));
+      check('a well-formed regex is valid', WF.isValid('/elect(ion|oral)/', 'word'));
+      check('an unbalanced regex is caught', WF.isValid('/[unclosed/', 'word') === false);
+      check('a bad quantifier is caught', WF.isValid('/a{2,1}/', 'word') === false);
+      check('a stray bracket in a plain word is still fine',
+        WF.isValid('[not a regex]', 'word'), 'only /.../ is parsed as a regex');
+      check('invalidWords lists just the broken ones',
+        JSON.stringify(WF.invalidWords(['trump', '/[unclosed/', 'news'], 'word')) ===
+        JSON.stringify(['/[unclosed/']));
+      check('a broken entry is skipped when compiling',
+        WF.compileAll(['trump', '/[unclosed/'], 'word').length === 1);
+
+      // --- handles are one word ---
+      /* Regression: "ad" matched @something-ad-nonsense, so every Short from
+         that channel was hidden for a word nobody could see in it. */
+      function hits(word, text) { return WF.compile(word, 'word').test(text); }
+      check('a word inside a handle does not match',
+        !hits('ad', '@something-ad-nonsense') && !hits('ad', 'u/some.ad.guy') &&
+        !hits('ad', 'r/ad_fans') && !hits('something', '@something-ad-nonsense'));
+      check('the whole handle does, with or without its @',
+        hits('something-ad-nonsense', 'by @something-ad-nonsense') &&
+        hits('@something-ad-nonsense', 'by @something-ad-nonsense') && hits('news', 'r/news'));
+      check('outside handles, hyphens still separate words',
+        hits('ad', 'an ad-supported plan') && hits('war', 'anti-war') && hits('ad', '#ad'));
+      check('an underscore joins words', !hits('ad', 'some_ad_guy'));
+
+      // --- phrases ignore the punctuation between their words ---
+      /* Regression: the picture reader drops a lone "&", so a Short whose
+         frame said "Mitchell & Webb" read "Mitchell Webb", and the phrase
+         "mitchell & webb" never matched it. */
+      check('a phrase matches with the symbol between its words gone',
+        hits('mitchell & webb', 'That Mitchell Webb Look') && hits('mitchell & webb', 'Mitchell - Webb') &&
+        hits('mitchell & webb', 'Mitchell\nWebb'));
+      check('"&", "+" and "and" stand for each other',
+        hits('mitchell & webb', 'Mitchell and Webb') && hits('mitchell and webb', 'Mitchell & Webb') &&
+        hits('mitchell + webb', 'mitchell and webb'));
+      check('...but the words still have to be whole and in order',
+        !hits('mitchell & webb', 'MitchellWebb') && !hits('mitchell & webb', 'mitchell_webb') &&
+        !hits('mitchell & webb', 'Mitchell and the Webb') && !hits('mitchell & webb', 'Webb & Mitchell'));
+      check('a phrase can start or end with "and"',
+        hits('and then', 'And then it happened') && hits('salt and', 'salt and') && !hits('salt and', 'salt'));
+      check('punctuation inside a word is kept as typed',
+        hits('at&t', 'AT&T deals') && !hits('at&t', 'AT T deals') && hits('c++', 'learn c++ now'));
+
+      // --- settings that follow you between devices ---
+      var A = window.__areas;
+
+      // an existing install has local only: it must still load, then sync out
+      check('a local-only install still loads', (await WF.loadConfig()).words.length === 2);
+
+      var res = await WF.saveConfig({ words: ['alpha'] });
+      check('saving reaches sync', res.area === 'sync' && !!A.sync.wfConfig);
+      check('and keeps a local copy too', !!A.local.wfConfig,
+        'sync outage must not lose the list');
+      check('each copy is stamped', A.sync.wfConfig.savedAt > 0 &&
+        A.local.wfConfig.savedAt === A.sync.wfConfig.savedAt);
+
+      // whichever copy is newer wins
+      A.sync.wfConfig = { words: ['from-sync'], savedAt: 2000 };
+      A.local.wfConfig = { words: ['from-local'], savedAt: 1000 };
+      check('the newer copy wins when sync leads',
+        (await WF.loadConfig()).words[0] === 'from-sync');
+
+      A.sync.wfConfig = { words: ['from-sync'], savedAt: 1000 };
+      A.local.wfConfig = { words: ['from-local'], savedAt: 3000 };
+      check('...and when local leads',
+        (await WF.loadConfig()).words[0] === 'from-local');
+
+      // sync unavailable or over quota: keep the change, report it honestly
+      var realSet = browser.storage.sync.set;
+      browser.storage.sync.set = function () {
+        return Promise.reject(new Error('QUOTA_BYTES_PER_ITEM quota exceeded'));
+      };
+      var failed = await WF.saveConfig({ words: ['huge'] });
+      browser.storage.sync.set = realSet;
+
+      check('a failed sync still saves locally',
+        failed.area === 'local' && A.local.wfConfig.words[0] === 'huge');
+      check('and says why', /quota/i.test(failed.error || ''));
+      check('the list survives a sync failure',
+        (await WF.loadConfig()).words[0] === 'huge');
+
+      // put the harness back the way content.js expects it
+      A.sync = {};
+      A.local.wfConfig = { words: ['trump', 'the office'], enabled: true };
+
+      // --- two windows editing the list must not erase each other ---
+      var merged = WF.mergeWords(['a', 'b'], ['a', 'c'], ['a', 'b', 'd']);
+      check('a merge keeps the word added in the other window',
+        merged.indexOf('d') !== -1, JSON.stringify(merged));
+      check('...applies the word added here', merged.indexOf('c') !== -1);
+      check('...and the word removed here', merged.indexOf('b') === -1);
+      check('merging is case-insensitive and adds no duplicates',
+        JSON.stringify(WF.mergeWords(['Trump'], ['trump'], ['Trump', 'x'])) ===
+        JSON.stringify(['Trump', 'x']));
+
+      A.sync = {};
+      A.local.wfConfig = { words: ['x'], savedAt: 5 };
+      var updated = await WF.updateConfig(function (c) { c.words.push('y'); });
+      check('an update applies to what is stored now, not to a stale copy',
+        JSON.stringify(updated.cfg.words) === JSON.stringify(['x', 'y']) &&
+        JSON.stringify((await WF.loadConfig()).words) === JSON.stringify(['x', 'y']));
+
+      await Promise.all([
+        WF.updateConfig(function (c) { c.words.push('p'); }),
+        WF.updateConfig(function (c) { c.words.push('q'); })
+      ]);
+      var afterBoth = (await WF.loadConfig()).words;
+      check('two updates fired at once both land',
+        afterBoth.indexOf('p') !== -1 && afterBoth.indexOf('q') !== -1, JSON.stringify(afterBoth));
+
+      // put the harness back the way content.js expects it
+      A.sync = {};
+      A.local.wfConfig = { words: ['trump', 'the office'], enabled: true };
+
+      // --- opt-in password lock ---
+      check('lock is off by default', WF.normalize(null).lock.enabled === false);
+
+      var lock = await WF.makeLock('hunter2');
+      check('correct password verifies', (await WF.verifyPassword('hunter2', lock)) === true);
+      check('wrong password rejected', (await WF.verifyPassword('Hunter2', lock)) === false);
+      check('password itself is never stored',
+        JSON.stringify(lock).indexOf('hunter2') === -1,
+        'salt+hash only');
+      check('same password, different salt, different hash',
+        (await WF.makeLock('hunter2')).hash !== lock.hash);
+      check('a lock with no hash is inert',
+        WF.normalize({ lock: { enabled: true } }).lock.enabled === false);
+
+      // --- parts that switch themselves visible must stay hidden ---
+      function shown(el) {
+        if (!el) return false;
+        if (getComputedStyle(el).visibility === 'hidden') return false;
+        var opacity = 1;
+        for (var cur = el; cur; cur = cur.parentElement) {
+          opacity *= parseFloat(getComputedStyle(cur).opacity);
+        }
+        return opacity > 0.01;
+      }
+      var glued = document.getElementById('glued');
+      await waitForState(glued, 'hidden');
+      check("a word right after another element's text still matches",
+        glued.dataset.wfState === 'hidden', 'state=' + glued.dataset.wfState);
+
+      var dated = document.getElementById('dated');
+      await sleep(300);
+      check('a blocked phrase inside a timestamp does not hide the post',
+        dated.dataset.wfState === undefined, 'state=' + dated.dataset.wfState);
+
+      var escaper = document.getElementById('escaper');
+      await waitForState(escaper, 'hidden');
+      await sleep(500);
+      check('a post whose parts override visibility is hidden', escaper.dataset.wfState === 'hidden');
+      check('...its header row is not painted', !shown(escaper.querySelector('.esc-header')),
+        'computed visibility ' + getComputedStyle(escaper.querySelector('.esc-header')).visibility);
+      check('...nor media that turned visible after hiding', !shown(escaper.querySelector('.esc-media')));
+      check('...while its placeholder still is', shown(escaper.querySelector('.wf-veil')));
+      var escBtn = escaper.querySelector('.wf-veil-btn');
+      if (escBtn) escBtn.click();
+      check('Show brings that content back',
+        shown(escaper.querySelector('.esc-header')) && shown(escaper.querySelector('.esc-media')));
+
+      // --- what you type, and what a player does, is not news ---
+      /* Regression: every key pressed in a reply box, and every tick of a
+         player's clock, re-read the text of every post on the page — enough,
+         on a long feed, that typing in Firefox lagged badly. Reads are counted
+         by the tree walks a post's text is read with. The 1.2s sweep re-reads
+         everything every ~10s, so a 1s window can hold at most one of those. */
+      var reads = new Map();
+      var realWalker = document.createTreeWalker;
+      document.createTreeWalker = function (root) {
+        reads.set(root, (reads.get(root) || 0) + 1);
+        return realWalker.apply(document, arguments);
+      };
+      function readsOf(els) {
+        return els.reduce(function (n, el) { return n + (reads.get(el) || 0); }, 0);
+      }
+
+      var thread = document.createElement('article');
+      thread.textContent = 'a perfectly harmless thread about knitting';
+      var replyBox = document.createElement('div');
+      replyBox.setAttribute('contenteditable', 'true');
+      thread.appendChild(replyBox);
+      var watched = document.createElement('article');
+      var clock = document.createElement('span');
+      clock.textContent = '0:00';
+      var ytPlayer = document.createElement('ytd-player');
+      ytPlayer.appendChild(clock);
+      watched.appendChild(document.createTextNode('a calm video about rivers'));
+      watched.appendChild(ytPlayer);
+      var quietFeed = [thread, watched];
+      for (var q = 0; q < 20; q++) {
+        var filler = document.createElement('article');
+        filler.textContent = 'filler post number ' + q;
+        quietFeed.push(filler);
+      }
+      quietFeed.forEach(function (el) { document.getElementById('feed').appendChild(el); });
+      await sleep(700);
+
+      reads.clear();
+      var typed = 'trump is what I am typing';
+      for (var k = 0; k < typed.length; k++) {
+        if (k % 5 === 0) replyBox.appendChild(document.createTextNode(''));
+        replyBox.lastChild.data += typed[k];
+        await sleep(40);
+      }
+      await sleep(400);
+      check('typing in a reply box does not re-read the post around it',
+        (reads.get(thread) || 0) <= 1, (reads.get(thread) || 0) + ' reads over ' + typed.length + ' keys, ' + readsOf(quietFeed) + ' of all ' + quietFeed.length + ' posts');
+      check('a blocked word you type does not hide the post you are replying to',
+        thread.dataset.wfState === undefined, 'state=' + thread.dataset.wfState);
+
+      reads.clear();
+      for (var s = 1; s <= 10; s++) { clock.textContent = '0:0' + (s % 10); await sleep(100); }
+      check("a player's ticking clock does not re-read its post",
+        (reads.get(watched) || 0) <= 1, (reads.get(watched) || 0) + ' reads over 10 ticks');
+
+      reads.clear();
+      for (var u = 0; u < 10; u++) { document.body.appendChild(document.createElement('div')); await sleep(100); }
+      check('a change elsewhere on the page does not re-read unchanged posts',
+        readsOf(quietFeed) <= quietFeed.length, readsOf(quietFeed) + ' reads of ' + quietFeed.length + ' posts');
+
+      // The insurance re-read still happens, a post at a time, within ~14s.
+      reads.clear();
+      await sleep(15000);
+      check('an unchanged post is still re-read now and then, as insurance',
+        quietFeed.every(function (el) { return (reads.get(el) || 0) >= 1; }),
+        quietFeed.filter(function (el) { return !reads.get(el); }).length + ' of ' + quietFeed.length + ' never re-read in 15s');
+
+      document.createTreeWalker = realWalker;
+
+      var renamed = document.createElement('article');
+      var renamedTitle = document.createElement('h3');
+      renamedTitle.setAttribute('title', 'a video about bread');
+      renamedTitle.textContent = 'Video';
+      renamed.appendChild(renamedTitle);
+      document.getElementById('feed').appendChild(renamed);
+      await sleep(700);
+      renamedTitle.setAttribute('title', 'a video about trump');
+      var renamedMs = await waitForState(renamed, 'hidden', 900);
+      check('a title rewritten only in its attribute is noticed',
+        renamed.dataset.wfState === 'hidden', 'after ' + renamedMs + 'ms');
+
+      document.getElementById('out').textContent = results.join('\n');
+      console.log('RESULTS\n' + results.join('\n'));
+    }, 900);
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,12 @@
+# Built by dev/package.py
+/quiet-feed.xpi
+/quiet-feed-chrome.zip
+
+# The Chromium build unpacked for Chrome's "Load unpacked"
+/quiet-feed-chrome/
+
+__pycache__/
+
+# Local tooling, not part of the extension
+/.claude/
+.directory

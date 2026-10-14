@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Demo feed</title>
+  <!-- The real stylesheet: placeholders and preview outlines are the extension's own. -->
+  <link rel="stylesheet" href="../../src/hidden.css">
+  <style>
+    html, body {
+      margin: 0;
+      overflow: hidden;
+      background: #fff;
+      color: #16181d;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    /* ---- video grid ---- */
+
+    .grid #feed {
+      display: grid;
+      grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+      gap: 14px 12px;
+      padding: 12px;
+    }
+
+    .thumb {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9px;
+      font-size: 38px;
+      overflow: hidden;
+    }
+
+    .dur {
+      position: absolute;
+      right: 6px;
+      bottom: 6px;
+      padding: 1px 5px;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      border-radius: 4px;
+      font-size: 10.5px;
+      font-weight: 600;
+    }
+
+    .card h3 {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      min-height: 2.7em;
+      margin: 8px 0 3px;
+      overflow: hidden;
+      font-size: 13px;
+      line-height: 1.35;
+      font-weight: 600;
+    }
+
+    .meta {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      color: #6b7280;
+      font-size: 11px;
+    }
+
+    /* ---- comment thread ---- */
+
+    .thread #feed { padding: 18px 24px; }
+
+    .op h2 { margin: 0 0 4px; font-size: 19px; line-height: 1.3; }
+
+    .op .meta { font-size: 12px; }
+
+    .sort {
+      margin: 14px 0 4px;
+      padding-top: 10px;
+      border-top: 1px solid #eceef2;
+      color: #6b7280;
+      font-size: 12px;
+    }
+
+    .comment { display: flex; gap: 11px; padding: 10px 0; }
+
+    .av {
+      flex: none;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .who { color: #6b7280; font-size: 12px; }
+
+    .who b { margin-right: 6px; color: #16181d; font-weight: 600; }
+
+    .comment p { margin: 3px 0 5px; font-size: 14px; line-height: 1.45; }
+
+    .acts { display: flex; gap: 16px; color: #8a909c; font-size: 12px; }
+  </style>
+</head>
+
+<body>
+  <div id="feed"></div>
+
+  <script src="stub.js"></script>
+  <script src="../../src/common.js"></script>
+  <script>
+    /* Every name, title and channel here is invented. The cards are plain
+       <article>s, which the extension already treats as posts. */
+    WF.detectSite = function () { return 'reddit'; };
+
+    var q = new URLSearchParams(location.search);
+    var layout = q.get('layout') || 'grid';
+    document.body.className = layout;
+    if (q.get('cols')) document.body.style.setProperty('--cols', q.get('cols'));
+
+    var feed = document.getElementById('feed');
+
+    function el(tag, cls, text) {
+      var node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    var VIDEOS = [
+      /* Emoji from before 2020 only: Windows 10's emoji font has no glyph for
+         newer ones (a saw, a potted plant) and draws an empty box. */
+      ['🔨', '#f9d976', '#f39f86', 'Building a walnut side table with hand tools only', 'Weekend Woodshop', '214K views', '18:42'],
+      ['😱', '#3a3f5c', '#6c5b7b', 'Extreme prank on my roommate (gone wrong)', 'Chaos Crew', '1.2M views', '14:10'],
+      ['🍞', '#fbe3b9', '#e6b980', 'Sourdough for beginners: the five mistakes everyone makes', 'Pan & Pantry', '386K views', '12:05'],
+      ['💰', '#ffd200', '#f7971e', 'This crypto coin will 100x by Friday (not financial advice)', 'MoonRocket Daily', '97K views', '9:58'],
+      ['🥾', '#a8e063', '#56ab2f', 'A week on the coastal trail with no phone', 'Trail Notes', '142K views', '31:17'],
+      ['🔭', '#141e30', '#243b55', 'Why the night sky looks different in winter', 'Orbit Lab', '508K views', '14:22'],
+      ['🍿', '#ff758c', '#ff7eb3', 'Influencer drama: the full timeline, every receipt', 'Tea Time Talks', '2.3M views', '47:03'],
+      ['🌱', '#d4fc79', '#96e6a1', 'Repotting 40 houseplants in one afternoon', 'Pixel Garden', '61K views', '22:48'],
+      ['🏠', '#e0c3fc', '#8ec5fc', 'Tiny apartment, big kitchen: a full tour', 'Small Space Living', '733K views', '16:30'],
+      ['🚲', '#89f7fe', '#66a6ff', 'Restoring a 1970s road bike, start to finish', 'Two Wheels Back', '275K views', '38:11'],
+      ['🎁', '#f093fb', '#f5576c', 'MEGA GIVEAWAY: comment to win a new phone', 'Prize Palace', '45K views', '3:12'],
+      ['🎹', '#fdfcfb', '#e2d1c3', 'Learning piano at 40: month three update', 'Late Keys', '88K views', '11:54']
+    ];
+
+    var COMMENTS = [
+      ['moss_and_granite', '#4f8a8b', 'Bouldering. Two evenings a week and I sleep better than I have in years.', '312', '5h'],
+      ['kettle_logic', '#c06c84', 'It did, until the drama in my gym\'s group chat undid all of it.', '87', '5h'],
+      ['quietcartographer', '#6c7ae0', 'Baking bread on Sundays. The kneading is weirdly calming.', '241', '4h'],
+      ['alpha_gains_888', '#e0a458', 'Got into crypto trading and made 4x in a month. DM me and I\'ll show you how.', '2', '3h'],
+      ['fernwatcher', '#5b9a5b', 'Birdwatching from my balcony. Twenty-three species so far this spring.', '198', '3h'],
+      ['prize_drop_official', '#d1495b', 'GIVEAWAY: the first 50 replies get a free course, link in my profile.', '1', '1h']
+    ];
+
+    if (layout === 'grid') {
+      VIDEOS.forEach(function (v) {
+        var card = el('article', 'card');
+        var thumb = el('div', 'thumb', v[0]);
+        thumb.style.background = 'linear-gradient(135deg, ' + v[1] + ', ' + v[2] + ')';
+        thumb.appendChild(el('span', 'dur', v[6]));
+        card.appendChild(thumb);
+        card.appendChild(el('h3', null, v[3]));
+        card.appendChild(el('div', 'meta', v[4] + ' · ' + v[5]));
+        feed.appendChild(card);
+      });
+    } else {
+      var op = el('div', 'op');
+      op.appendChild(el('h2', null, 'What\'s a hobby that actually made your week better?'));
+      op.appendChild(el('div', 'meta', 'hana_writes · 6h · 214 comments'));
+      feed.appendChild(op);
+      feed.appendChild(el('div', 'sort', 'Sort by: Best'));
+
+      COMMENTS.forEach(function (c) {
+        var row = el('article', 'comment');
+        var av = el('div', 'av', c[0].charAt(0).toUpperCase());
+        av.style.background = c[1];
+        row.appendChild(av);
+
+        var body = el('div');
+        var who = el('div', 'who');
+        who.appendChild(el('b', null, c[0]));
+        who.appendChild(document.createTextNode(c[4]));
+        body.appendChild(who);
+        body.appendChild(el('p', null, c[2]));
+        var acts = el('div', 'acts');
+        acts.appendChild(el('span', null, '▲ ' + c[3] + ' ▼'));
+        acts.appendChild(el('span', null, 'Reply'));
+        acts.appendChild(el('span', null, 'Share'));
+        body.appendChild(acts);
+        row.appendChild(body);
+        feed.appendChild(row);
+      });
+    }
+  </script>
+  <script src="../../src/content.js"></script>
+</body>
+
+</html>

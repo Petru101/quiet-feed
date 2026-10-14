@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Quiet Feed store screenshot</title>
+  <style>
+    html, body { margin: 0; }
+
+    body {
+      position: relative;
+      width: 1280px;
+      height: 800px;
+      overflow: hidden;
+      background:
+        radial-gradient(900px 520px at 88% -8%, #dbe6ff 0%, rgba(219, 230, 255, 0) 70%),
+        linear-gradient(180deg, #f6f8fc, #e8ecf3);
+      color: #16181d;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    .head { position: absolute; left: 52px; top: 36px; right: 260px; }
+
+    .head h1 {
+      margin: 0;
+      font-size: 34px;
+      line-height: 1.15;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .head p { margin: 9px 0 0; font-size: 17px; line-height: 1.4; color: #5b6270; }
+
+    .brand {
+      position: absolute;
+      right: 52px;
+      top: 42px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: #3a4150;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .brand img { width: 28px; height: 28px; }
+
+    .win {
+      position: absolute;
+      overflow: hidden;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 2px rgba(20, 30, 60, 0.08), 0 14px 40px rgba(20, 30, 60, 0.14);
+    }
+
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 30px;
+      padding: 0 12px;
+      background: #fafbfc;
+      border-bottom: 1px solid #eceef2;
+    }
+
+    .bar i { width: 10px; height: 10px; background: #dcdfe5; border-radius: 50%; }
+
+    .win iframe { display: block; width: 100%; border: 0; }
+
+    .tag {
+      position: absolute;
+      color: #6b7280;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .tag.on { color: #2f6fed; }
+
+    .popup {
+      position: absolute;
+      overflow: hidden;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 1px 2px rgba(20, 30, 60, 0.1), 0 18px 48px rgba(20, 30, 60, 0.2);
+      transform-origin: top left;
+    }
+
+    .popup iframe { display: block; width: 330px; height: 300px; border: 0; }
+  </style>
+</head>
+
+<body>
+  <div class="head">
+    <h1 id="title"></h1>
+    <p id="sub"></p>
+  </div>
+  <div class="brand"><img src="../../icons/icon.svg" alt=""> Quiet Feed</div>
+  <div id="stage"></div>
+
+  <script>
+    /* Short words on purpose: a grid card is narrow, and the placeholder's
+       "Hidden · “word”" label truncates a longer one. */
+    var WORDS = encodeURIComponent('crypto,drama,giveaway,prank');
+
+    function win(x, y, w, h, src, id) {
+      return '<div class="win" style="left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px">' +
+        '<div class="bar"><i></i><i></i><i></i></div>' +
+        '<iframe' + (id ? ' id="' + id + '"' : '') + ' src="' + src + '" style="height:' + (h - 31) + 'px"></iframe></div>';
+    }
+
+    function popup(x, y, scale, src) {
+      return '<div class="popup" style="left:' + x + 'px;top:' + y + 'px;transform:scale(' + scale + ')">' +
+        '<iframe class="pop" src="' + src + '"></iframe></div>';
+    }
+
+    function tag(x, y, text, on) {
+      return '<div class="tag' + (on ? ' on' : '') + '" style="left:' + x + 'px;top:' + y + 'px">' + text + '</div>';
+    }
+
+    var SHOTS = {
+      1: {
+        title: 'Hide any post that mentions a word you choose',
+        sub: 'The whole post, not just the word. It keeps its space, so the feed doesn\'t jump or keep reloading.',
+        stage:
+          tag(52, 150, 'Without Quiet Feed') +
+          win(52, 176, 576, 590, 'feed.html?layout=grid') +
+          tag(652, 150, 'With Quiet Feed', true) +
+          win(652, 176, 576, 590, 'feed.html?layout=grid&words=' + WORDS)
+      },
+      2: {
+        title: 'Comment threads too, not just feeds',
+        sub: 'Videos, comments and posts on YouTube, Reddit and X each have their own switch.',
+        stage:
+          win(52, 160, 736, 606, 'feed.html?layout=thread&words=' + WORDS, 'feed') +
+          popup(830, 160, 1.2, 'popup.html?words=' + WORDS + '&statsFrom=feed')
+      },
+      3: {
+        title: 'Preview mode shows what a word would catch',
+        sub: 'Matches are outlined instead of hidden, so you can tell if a word is too broad before relying on it.',
+        stage:
+          win(52, 160, 736, 606, 'feed.html?layout=grid&cols=4&reveal=1&words=' + WORDS, 'feed') +
+          popup(830, 160, 1.2, 'popup.html?reveal=1&words=' + WORDS + '&statsFrom=feed')
+      },
+      4: {
+        title: 'Hidden posts keep their space, and go quiet',
+        sub: 'So YouTube doesn\'t reload to fill a gap, and no video plays behind a placeholder.',
+        stage: win(190, 160, 900, 606, 'settings.html?section=1&words=' + WORDS)
+      }
+    };
+
+    var n = new URLSearchParams(location.search).get('shot') || '1';
+    var shot = SHOTS[n] || SHOTS[1];
+    document.getElementById('title').textContent = shot.title;
+    document.getElementById('sub').textContent = shot.sub;
+    document.getElementById('stage').innerHTML = shot.stage;
+
+    // Size each popup to its content, as the browser does for a real one.
+    var sizing = setInterval(function () {
+      document.querySelectorAll('iframe.pop').forEach(function (f) {
+        var body = f.contentDocument && f.contentDocument.body;
+        if (body && body.offsetHeight > 50) f.style.height = body.offsetHeight + 'px';
+      });
+    }, 100);
+    setTimeout(function () { clearInterval(sizing); }, 3000);
+  </script>
+</body>
+
+</html>

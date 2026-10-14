@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Quiet Feed OCR engine check</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; padding: 16px; }
+    #shots canvas { width: 240px; margin: 4px; border: 1px solid #ccc; vertical-align: top; }
+    #out { white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; }
+  </style>
+</head>
+
+<body>
+  <h3>The real bundled engine, on generated images</h3>
+  <p>Slow on purpose: the first read loads the ~7MB engine. Every line should say PASS.</p>
+  <div id="shots"></div>
+  <div id="out">running…</div>
+
+  <script src="../src/vendor/tesseract/tesseract.min.js"></script>
+  <script src="../src/ocr.js"></script>
+  <script>
+    /* Each case draws something shaped like what the feeds serve, at the size
+       they serve it, and names words that must be read — and, for the image
+       with no text, that nothing is read at all. */
+
+    function noise(ctx, w, h, seed) {
+      var s = seed;
+      function rnd() { s = (s * 16807) % 2147483647; return s / 2147483647; }
+      for (var i = 0; i < 60; i++) {
+        ctx.fillStyle = 'hsl(' + Math.floor(rnd() * 360) + ',55%,' + Math.floor(30 + rnd() * 40) + '%)';
+        ctx.beginPath();
+        ctx.arc(rnd() * w, rnd() * h, 10 + rnd() * 60, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    var CASES = [
+      {
+        name: 'meme caption (white Impact, black outline, busy photo)',
+        w: 500, h: 500, expect: ['WHEN', 'ELECTION', 'RESULTS'],
+        draw: function (ctx, w, h) {
+          noise(ctx, w, h, 7);
+          var lines = [['WHEN THE ELECTION', 70], ['RESULTS COME IN', 470]];
+          /* Shrunk to fit, as a meme generator does. Without Impact installed
+             (most Linux systems) the fallback font is wider, and at 54px the
+             top line ran off both edges and lost its first and last letters. */
+          var size = 54;
+          do {
+            ctx.font = 'bold ' + size + 'px Impact, "Arial Black", sans-serif';
+            var widest = Math.max.apply(null, lines.map(function (l) { return ctx.measureText(l[0]).width; }));
+          } while (widest > w - 30 && (size -= 2) > 20);
+          ctx.textAlign = 'center';
+          ctx.lineWidth = 6;
+          ctx.strokeStyle = '#000';
+          ctx.fillStyle = '#fff';
+          lines.forEach(function (l) {
+            ctx.strokeText(l[0], w / 2, l[1]);
+            ctx.fillText(l[0], w / 2, l[1]);
+          });
+        }
+      },
+      {
+        name: 'video thumbnail (480x360, bold yellow on a gradient)',
+        w: 480, h: 360, expect: ['CRYPTO', 'CRASH'],
+        draw: function (ctx, w, h) {
+          var g = ctx.createLinearGradient(0, 0, w, h);
+          g.addColorStop(0, '#1b1f6b');
+          g.addColorStop(1, '#c2185b');
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = '#ffe600';
+          ctx.font = '900 62px "Arial Black", Arial, sans-serif';
+          ctx.fillText('CRYPTO', 24, 110);
+          ctx.fillText('CRASH!', 24, 180);
+        }
+      },
+      {
+        name: 'screenshot of a post (small dark text on white)',
+        w: 600, h: 220, expect: ['senator', 'announced', 'resignation'],
+        draw: function (ctx, w, h) {
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = '#0f1419';
+          ctx.font = 'bold 15px Arial, sans-serif';
+          ctx.fillText('Some News Account  @somenews', 20, 34);
+          ctx.font = '17px Arial, sans-serif';
+          ctx.fillText('BREAKING: The senator announced her resignation', 20, 80);
+          ctx.fillText('this morning after weeks of speculation.', 20, 106);
+        }
+      },
+      {
+        name: 'white text on a dark background',
+        w: 640, h: 360, expect: ['SPOILERS', 'FINALE'],
+        draw: function (ctx, w, h) {
+          ctx.fillStyle = '#111';
+          ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = '#fafafa';
+          ctx.font = 'bold 48px Arial, sans-serif';
+          ctx.fillText('SPOILERS: THE FINALE', 30, 190);
+        }
+      },
+      {
+        // Shaped like a real meme that read nothing at all before margins:
+        // caption bands against the top and bottom edges, a photo between.
+        name: 'caption bands touching the edges of the picture',
+        w: 1080, h: 1098, expect: ['WAR', 'AGAINST', 'MACHINES', 'VIBRATORS'],
+        draw: function (ctx, w, h) {
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = '#2e3b2a';
+          ctx.fillRect(0, 180, w, 690);
+          noise(ctx, w, 690, 3);
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, w, 180);
+          ctx.fillRect(0, 870, w, h - 870);
+          ctx.fillStyle = '#1a1a1a';
+          ctx.textAlign = 'center';
+          ctx.font = 'bold 72px Arial, sans-serif';
+          ctx.fillText('WHEN THE WAR AGAINST', w / 2, 66);
+          ctx.fillText('THE MACHINES STARTS', w / 2, 158);
+          ctx.fillStyle = '#000';
+          ctx.font = 'bold 84px Arial, sans-serif';
+          ctx.fillText('AND WOMEN HAVE TO', w / 2, 972);
+          ctx.fillText('SHOOT THEIR VIBRATORS', w / 2, 1066);
+        }
+      },
+      {
+        name: 'a lone two-letter scrap is dropped, a short caption is kept',
+        w: 480, h: 360, expect: ['DAY', '111'], absent: ['UN'],
+        draw: function (ctx, w, h) {
+          ctx.fillStyle = '#f4f4f4';
+          ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = '#111';
+          ctx.font = '900 56px "Arial Black", Arial, sans-serif';
+          ctx.fillText('DAY 111', 30, 120);
+          ctx.font = 'bold 40px Arial, sans-serif';
+          ctx.fillText('UN', 360, 300);
+        }
+      },
+      {
+        name: 'a picture with no text reads as nothing',
+        w: 480, h: 360, expect: [], empty: true,
+        draw: function (ctx, w, h) {
+          ctx.fillStyle = '#6a8';
+          ctx.fillRect(0, 0, w, h);
+          noise(ctx, w, h, 99);
+        }
+      }
+    ];
+
+    function toBlob(canvas, type) {
+      return new Promise(function (resolve) { canvas.toBlob(resolve, type || 'image/png'); });
+    }
+
+    (async function () {
+      var out = [];
+      var shots = document.getElementById('shots');
+      var pass = 0, fail = 0;
+
+      for (var i = 0; i < CASES.length; i++) {
+        var c = CASES[i];
+        var canvas = document.createElement('canvas');
+        canvas.width = c.w;
+        canvas.height = c.h;
+        c.draw(canvas.getContext('2d'), c.w, c.h);
+        shots.appendChild(canvas);
+
+        // Served as JPEG/WebP in the wild; decode through the same path.
+        var blob = await toBlob(canvas, i % 2 ? 'image/webp' : 'image/jpeg');
+        var t0 = performance.now();
+        var text = '';
+        var error = null;
+        try { text = await OCR.recognize(blob); } catch (e) { error = e; }
+        var ms = Math.round(performance.now() - t0);
+
+        var missing = c.expect.filter(function (w) {
+          return !new RegExp('(^|[^\\p{L}])' + w + '([^\\p{L}]|$)', 'iu').test(text);
+        });
+        var present = (c.absent || []).filter(function (w) {
+          return new RegExp('(^|[^\\p{L}])' + w + '([^\\p{L}]|$)', 'iu').test(text);
+        });
+        missing = missing.concat(present.map(function (w) { return 'should not read ' + w; }));
+        var ok = !error && !missing.length && (!c.empty || !text.trim());
+        ok ? pass++ : fail++;
+        out.push((ok ? 'PASS' : 'FAIL') + '  ' + c.name + '  (' + ms + ' ms)' +
+          '\n      read: ' + JSON.stringify(text) +
+          (missing.length ? '\n      missing: ' + missing.join(', ') : '') +
+          (error ? '\n      error: ' + (error.message || error) : ''));
+        document.getElementById('out').textContent = out.join('\n') + '\n…';
+      }
+
+      out.push('\n' + pass + ' passed, ' + fail + ' failed');
+      document.getElementById('out').textContent = out.join('\n');
+      window.__done = { pass: pass, fail: fail };
+    })();
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Quiet Feed — Settings</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #ffffff;
+      --card: #fafbfc;
+      --fg: #16181d;
+      --muted: #6b7280;
+      --line: #e3e5e9;
+      --accent: #2f6fed;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #17191d;
+        --card: #1e2126;
+        --fg: #e9eaec;
+        --muted: #9aa0aa;
+        --line: #33363c;
+        --accent: #6f9dff;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    /* Author rules like `.row { display: flex }` outrank the browser's built-in
+       [hidden] rule, which would silently defeat el.hidden = true. */
+    [hidden] { display: none !important; }
+
+    body {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 28px 20px 60px;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    h1 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 24px;
+      font-size: 20px;
+    }
+
+    h1 img { width: 24px; height: 24px; }
+
+    section {
+      margin-bottom: 20px;
+      padding: 16px 18px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    h2 {
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .hint {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+
+    .opt {
+      display: flex;
+      gap: 9px;
+      align-items: flex-start;
+      padding: 7px 0;
+      cursor: pointer;
+    }
+
+    .opt input { margin-top: 3px; accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+
+    .opt .body { flex: 1; }
+
+    .opt .body b { font-weight: 600; }
+
+    .opt .body small { display: block; color: var(--muted); font-size: 12.5px; }
+
+    textarea {
+      width: 100%;
+      min-height: 190px;
+      padding: 10px 12px;
+      color: var(--fg);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font: 13px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace;
+      resize: vertical;
+    }
+
+    textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 8px 14px;
+      color: var(--fg);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      /* Not `font: 600 13px/1 inherit` — inherit can't sit inside a shorthand,
+         which voids the whole line and leaves the browser's button font. */
+      font: 600 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: var(--accent); }
+
+    button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+    .saved {
+      color: var(--muted);
+      font-size: 12.5px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    .saved.show { opacity: 1; }
+
+    code {
+      padding: 1px 5px;
+      background: var(--line);
+      border-radius: 4px;
+      font-size: 12.5px;
+    }
+
+    input[type="password"] {
+      flex: 1 1 170px;
+      min-width: 0;
+      padding: 8px 11px;
+      color: var(--fg);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font: inherit;
+    }
+
+    input[type="password"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+    button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+    button:disabled, input:disabled, textarea:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .lockbar {
+      margin-bottom: 20px;
+      padding: 14px 16px;
+      background: #fff5e6;
+      border: 1px solid #f0c27a;
+      border-radius: 10px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .lockbar { background: #33291a; border-color: #6b542c; }
+    }
+
+    .lockbar h2 { margin-bottom: 4px; }
+
+    .err { color: #d93a3a; font-weight: 600; }
+
+    .ok { color: var(--muted); }
+  </style>
+</head>
+
+<body>
+  <h1><img src="../icons/icon.svg" alt=""> Quiet Feed settings</h1>
+
+  <div class="lockbar" id="lockbar" hidden>
+    <h2>These settings are locked</h2>
+    <p class="hint" id="lock-msg">Enter your password to make changes. Everything stays readable.</p>
+    <form class="row" id="unlock-form">
+      <input type="password" id="unlock-input" placeholder="Password" autocomplete="current-password">
+      <button type="submit" class="primary">Unlock</button>
+    </form>
+  </div>
+
+  <section>
+    <h2>Blocked words</h2>
+    <p class="hint">
+      One per line. A plain word matches whole words only, plus their plural and possessive
+      (<code>cat</code> also catches <code>Cat's</code>). Several words on one line match as a
+      phrase. For anything fancier, write a regular expression: <code>/cat(s|nip)/</code>.
+    </p>
+    <textarea id="words" spellcheck="false" placeholder="One word or phrase per line"></textarea>
+    <div class="row">
+      <button type="button" class="primary" id="save-words">Save words</button>
+      <span class="saved" id="saved-words">Saved</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>How matching posts are hidden</h2>
+    <p class="hint">This is the setting that decides whether YouTube gets stuck reloading.</p>
+
+    <label class="opt">
+      <input type="radio" name="hideMode" value="placeholder">
+      <span class="body">
+        <b>Keep the space (recommended)</b>
+        <small>The post stays in the page and keeps its size, showing an empty placeholder you
+          scroll past. Because the feed never gets shorter, YouTube doesn't load extra content to
+          refill it.</small>
+      </span>
+    </label>
+
+    <label class="opt">
+      <input type="radio" name="hideMode" value="collapse">
+      <span class="body">
+        <b>Collapse completely</b>
+        <small>No gap left behind, but the feed gets shorter each time something is hidden — which is
+          what triggers the endless loading on YouTube.</small>
+      </span>
+    </label>
+
+    <label class="opt">
+      <input type="checkbox" id="showLabel">
+      <span class="body">
+        <b>Show which word matched</b>
+        <small>Prints <em>Hidden · "word"</em> on the placeholder instead of just <em>Hidden</em>.</small>
+      </span>
+    </label>
+  </section>
+
+  <section>
+    <h2>Audio</h2>
+    <label class="opt">
+      <input type="checkbox" id="killMedia">
+      <span class="body">
+        <b>Silence video in hidden posts</b>
+        <small>A hidden video still plays — hiding it visually doesn't stop the sound. Any video,
+          audio or embedded player inside a hidden post is torn out and replaced by an invisible
+          spacer of the same size, so it can't make noise and the layout doesn't shift. Turn this
+          off only if something breaks.</small>
+      </span>
+    </label>
+  </section>
+
+  <section>
+    <h2>Images</h2>
+    <label class="opt">
+      <input type="checkbox" id="ocr">
+      <span class="body">
+        <b>Read text in images</b>
+        <small>Also checks the words written inside thumbnails, memes, screenshots and link cards
+          against your list, for posts whose title gives nothing away. The text is read on this
+          computer by a bundled engine; no picture or text is sent anywhere. Firefox will ask to let
+          Quiet Feed load pictures from YouTube's, Reddit's and X's image servers, which is how it
+          reads them. English only, about a second per picture, and stylised lettering — most
+          YouTube thumbnails — is often missed.</small>
+      </span>
+    </label>
+    <label class="opt">
+      <input type="checkbox" id="ocrBlur">
+      <span class="body">
+        <b>Blur pictures until they've been read</b>
+        <small>Without this, a picture shows for a moment before its post is hidden. With it, a page
+          full of pictures clears one at a time, about a second each.</small>
+      </span>
+    </label>
+    <div class="row" id="ocr-more" hidden>
+      <span class="hint" style="margin: 0; flex: 1 1 300px;">Some pictures aren't being read: an
+        update added an image server that Firefox hasn't allowed yet.</span>
+      <button type="button" id="ocr-allow">Allow it</button>
+    </div>
+    <div class="row">
+      <span class="saved" id="saved-ocr">Saved</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where it runs</h2>
+    <label class="opt">
+      <input type="checkbox" id="site-youtubeVideos">
+      <span class="body"><b>YouTube videos</b><small>Feeds, search, sidebar, community posts,
+        notifications and Shorts. In the Shorts player, a match is skipped.</small></span>
+    </label>
+    <label class="opt">
+      <input type="checkbox" id="site-youtubeComments">
+      <span class="body"><b>YouTube comments</b><small>Comments and replies under a video. Turn this off to
+        filter what you're offered to watch, and leave the discussion alone.</small></span>
+    </label>
+    <label class="opt">
+      <input type="checkbox" id="site-redditPosts">
+      <span class="body"><b>Reddit posts</b><small>Feed and listing posts, on both the current site and old.reddit.com.</small></span>
+    </label>
+    <label class="opt">
+      <input type="checkbox" id="site-redditComments">
+      <span class="body"><b>Reddit comments</b><small>Individual comments on a thread. Turn this off to filter only what
+        gets posted, and leave discussion alone.</small></span>
+    </label>
+    <label class="opt">
+      <input type="checkbox" id="site-x">
+      <span class="body"><b>X</b><small>Posts and replies, on x.com and twitter.com. One switch rather than
+        two: X renders a reply with the same markup as a post, so there's nothing to tell them apart
+        by.</small></span>
+    </label>
+  </section>
+
+  <section>
+    <h2>Matching</h2>
+    <label class="opt">
+      <input type="radio" name="matchMode" value="word">
+      <span class="body">
+        <b>Whole words (recommended)</b>
+        <small><code>art</code> matches "art" and "arts", but not "particle".</small>
+      </span>
+    </label>
+    <label class="opt">
+      <input type="radio" name="matchMode" value="substring">
+      <span class="body">
+        <b>Anywhere in the text</b>
+        <small><code>art</code> also matches "particle" and "Bart". Catches more, misfires more.</small>
+      </span>
+    </label>
+  </section>
+
+  <section id="password-section">
+    <h2>Password</h2>
+    <p class="hint">
+      Off by default. Turn it on and changing your list, the site toggles or the on/off switch
+      asks for a password first — in the popup and here. Unlocking lasts about five minutes.
+      <br><br>
+      Be clear-eyed about what this is: a speed bump against your own impulse to edit the list,
+      not security. Anyone who can open <code>about:debugging</code> can read this extension's
+      storage or just disable it. The password itself is never stored, only a salted hash of it,
+      and <b>there is no recovery</b> — forget it and you'll have to reinstall the extension.
+    </p>
+
+    <div id="pw-off">
+      <div class="row">
+        <input type="password" id="pw-new" placeholder="New password" autocomplete="new-password">
+        <input type="password" id="pw-confirm" placeholder="Repeat it" autocomplete="new-password">
+        <button type="button" class="primary" id="pw-enable">Turn on</button>
+      </div>
+    </div>
+
+    <div id="pw-on" hidden>
+      <div class="row">
+        <span class="hint" style="margin:0">Protection is <b>on</b>.</span>
+        <button type="button" id="pw-change">Change password</button>
+        <button type="button" id="pw-disable">Turn off</button>
+        <button type="button" id="pw-relock">Lock now</button>
+      </div>
+      <div class="row" id="pw-change-row" hidden>
+        <input type="password" id="pw-new2" placeholder="New password" autocomplete="new-password">
+        <input type="password" id="pw-confirm2" placeholder="Repeat it" autocomplete="new-password">
+        <button type="button" class="primary" id="pw-change-save">Save</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <span class="saved" id="saved-pw"></span>
+    </div>
+  </section>
+
+  <section id="report">
+    <h2>Report a problem</h2>
+    <p class="hint">
+      Something not hidden that should be, or hidden that shouldn't be? Email
+      <a href="mailto:petru@email.com" id="report-address">petru@email.com</a> — it's far more
+      use to me than a star rating, and I can usually fix a missed selector quickly.
+    </p>
+    <p class="hint">
+      <b>Your word list is never included</b> — only how many words you have. The rest is the
+      version, your browser, and which options are switched on. Read it below before sending,
+      and delete anything you'd rather not share.
+    </p>
+    <textarea id="report-text" readonly rows="12" spellcheck="false"></textarea>
+    <div class="row">
+      <button type="button" class="primary" id="report-open">Open in email</button>
+      <button type="button" id="report-copy">Copy details</button>
+      <span class="saved" id="saved-report"></span>
+    </div>
+    <p class="hint" style="margin-top:10px">
+      No email app set up? Use <b>Copy details</b> and paste it into webmail.
+    </p>
+  </section>
+
+  <section>
+    <h2>Backup and sync</h2>
+    <p class="hint">
+      Your list follows you to other devices signed in to the same Firefox account, and a copy
+      is always kept on this machine as well. If a list ever grows past what Firefox Sync
+      accepts, saving keeps working and says it kept the change locally instead.
+    </p>
+    <p class="hint">Export writes your list and settings to a JSON file.</p>
+    <div class="row">
+      <button type="button" id="export">Export</button>
+      <button type="button" id="import">Import</button>
+      <input type="file" id="import-file" accept="application/json,.json" hidden>
+      <span class="saved" id="saved-io"></span>
+    </div>
+    <label class="opt" style="margin-top: 10px;">
+      <input type="checkbox" id="autoBackup">
+      <span class="body">
+        <b>Back up automatically</b>
+        <small>A few seconds after you change your list or settings, the same file Export makes is
+          saved to <code>Downloads/Quiet Feed backups/</code> — one file per day, so earlier days
+          are kept. Firefox deletes an extension's own storage when the extension is removed;
+          these files stay. An empty list is never backed up, and a shorter list never
+          overwrites a longer one. Firefox will ask to let Quiet Feed save downloads, and each
+          backup briefly shows in the downloads panel.</small>
+      </span>
+    </label>
+    <p class="hint" id="backup-status" hidden></p>
+    <div class="row">
+      <span class="saved" id="saved-backup"></span>
+    </div>
+  </section>
+
+  <script src="common.js"></script>
+  <script src="options.js"></script>
+</body>
+
+</html>

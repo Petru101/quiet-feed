@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Quiet Feed</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #ffffff;
+      --fg: #16181d;
+      --muted: #6b7280;
+      --line: #e3e5e9;
+      --chip: #f2f3f5;
+      --chip-fg: #16181d;
+      --accent: #2f6fed;
+      --danger: #d93a3a;
+      --warn-bg: #fff5e6;
+      --warn-line: #f0c27a;
+      --bad-bg: #fdecec;
+      --bad-fg: #b3261e;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1c1e22;
+        --fg: #e9eaec;
+        --muted: #9aa0aa;
+        --line: #33363c;
+        --chip: #2a2d33;
+        --chip-fg: #e9eaec;
+        --accent: #6f9dff;
+        --warn-bg: #33291a;
+        --warn-line: #6b542c;
+        --bad-bg: #3a2020;
+        --bad-fg: #ff9d9d;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    /* Author rules like `ul { display: flex }` outrank the browser's built-in
+       [hidden] rule, which would silently defeat el.hidden = true. */
+    [hidden] { display: none !important; }
+
+    body {
+      width: 330px;
+      margin: 0;
+      padding: 12px;
+      background: var(--bg);
+      color: var(--fg);
+      font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    header h1 {
+      flex: 1;
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    header img { width: 18px; height: 18px; }
+
+    .switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .switch input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+
+    .switch input:disabled { cursor: not-allowed; }
+
+    form { display: flex; gap: 6px; }
+
+    input[type="text"],
+    input[type="password"] {
+      flex: 1;
+      min-width: 0;
+      padding: 8px 10px;
+      color: var(--fg);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font: inherit;
+    }
+
+    input:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: -1px;
+      border-color: transparent;
+    }
+
+    input:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    button.primary {
+      padding: 8px 12px;
+      color: #fff;
+      background: var(--accent);
+      border: 0;
+      border-radius: 7px;
+      /* Not `font: 600 13px/1 inherit` — inherit can't sit inside a shorthand,
+         which voids the whole line and leaves the browser's button font. */
+      font: 600 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+
+    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ---- lock bar ---- */
+
+    .lockbar {
+      margin-bottom: 10px;
+      padding: 9px 10px;
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-line);
+      border-radius: 8px;
+    }
+
+    .lockbar p {
+      margin: 0 0 7px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .lockbar .err { color: var(--danger); font-weight: 600; }
+
+    /* ---- sites ---- */
+
+    .sites-heading {
+      margin: 11px 0 5px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .sites {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin: 0 0 5px;
+    }
+
+    /* Fixed width so the two rows line up under each other. */
+    .sites-label {
+      flex: 0 0 58px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 11px;
+      background: var(--chip);
+      color: var(--muted);
+      border: 1px solid transparent;
+      border-radius: 999px;
+      font: 600 12px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+
+    .pill[aria-pressed="true"] {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .pill:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .pill .tick { font-size: 10px; }
+
+    /* ---- word list ---- */
+
+    .list-head {
+      display: flex;
+      align-items: center;
+      margin: 12px 0 7px;
+    }
+
+    .list-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0;
+      color: var(--fg);
+      background: none;
+      border: 0;
+      font: 600 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+
+    .list-toggle:hover { color: var(--accent); }
+
+    .caret {
+      display: inline-block;
+      color: var(--muted);
+      font-size: 10px;
+      transition: transform 0.12s;
+    }
+
+    .caret.closed { transform: rotate(-90deg); }
+
+    .status {
+      margin: 10px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .status b { color: var(--fg); font-weight: 600; }
+
+    ul {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin: 0;
+      padding: 0;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+
+    li {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      padding: 4px 5px 4px 10px;
+      background: var(--chip);
+      color: var(--chip-fg);
+      border-radius: 999px;
+      font-size: 12px;
+    }
+
+    li.readonly { padding-right: 10px; }
+
+    li .word { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+    li .count {
+      padding: 0 5px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    li button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 17px;
+      height: 17px;
+      padding: 0;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      border-radius: 50%;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    li button:hover { background: var(--danger); color: #fff; }
+
+    /* An entry that can't compile: still listed, but visibly inert. */
+    li.bad { background: var(--bad-bg); color: var(--bad-fg); }
+
+    li.bad .word { text-decoration: line-through; }
+
+    li.bad::before {
+      content: "!";
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 13px;
+      height: 13px;
+      background: var(--bad-fg);
+      color: var(--bad-bg);
+      border-radius: 50%;
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .warn {
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: var(--bad-fg);
+    }
+
+    .empty { padding: 12px 4px; color: var(--muted); font-size: 12px; }
+
+    footer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+      font-size: 12px;
+    }
+
+    footer a { margin-left: auto; color: var(--accent); text-decoration: none; }
+
+    footer a + a { margin-left: 10px; }
+
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+
+<body>
+  <header>
+    <img src="../icons/icon.svg" alt="">
+    <h1>Quiet Feed</h1>
+    <label class="switch" title="Turn all filtering on or off">
+      <input type="checkbox" id="enabled">
+      <span id="enabled-label">On</span>
+    </label>
+  </header>
+
+  <div class="lockbar" id="lockbar" hidden>
+    <p id="lock-msg">Locked. Enter your password to make changes.</p>
+    <form id="unlock-form">
+      <input type="password" id="unlock-input" placeholder="Password" autocomplete="current-password">
+      <button type="submit" class="primary">Unlock</button>
+    </form>
+  </div>
+
+  <form id="add-form">
+    <input type="text" id="add-input" placeholder="Add a word or phrase…" autocomplete="off" spellcheck="false">
+    <button type="submit" class="primary" id="add-btn">Add</button>
+  </form>
+
+  <p class="warn" id="warn" hidden></p>
+
+  <p class="status" id="status"></p>
+
+  <p class="sites-heading">Runs on</p>
+
+  <div class="sites">
+    <span class="sites-label">YouTube</span>
+    <button type="button" class="pill" id="site-youtubeVideos" data-site="youtubeVideos"
+            data-name="YouTube videos" aria-label="YouTube videos" aria-pressed="true">
+      <span class="tick">✓</span> Videos
+    </button>
+    <button type="button" class="pill" id="site-youtubeComments" data-site="youtubeComments"
+            data-name="YouTube comments" aria-label="YouTube comments" aria-pressed="true">
+      <span class="tick">✓</span> Comments
+    </button>
+  </div>
+
+  <div class="sites">
+    <span class="sites-label">Reddit</span>
+    <button type="button" class="pill" id="site-redditPosts" data-site="redditPosts"
+            data-name="Reddit posts" aria-label="Reddit posts" aria-pressed="true">
+      <span class="tick">✓</span> Posts
+    </button>
+    <button type="button" class="pill" id="site-redditComments" data-site="redditComments"
+            data-name="Reddit comments" aria-label="Reddit comments" aria-pressed="true">
+      <span class="tick">✓</span> Comments
+    </button>
+  </div>
+
+  <div class="sites">
+    <span class="sites-label">X</span>
+    <button type="button" class="pill" id="site-x" data-site="x"
+            data-name="X posts" aria-label="X posts and replies" aria-pressed="true">
+      <span class="tick">✓</span> Posts &amp; replies
+    </button>
+  </div>
+
+  <div class="list-head">
+    <button type="button" class="list-toggle" id="list-toggle" aria-expanded="true" aria-controls="list">
+      <span class="caret" id="caret">▾</span>
+      <span id="list-count">Words</span>
+    </button>
+  </div>
+
+  <ul id="list"></ul>
+  <p class="empty" id="empty" hidden>No words yet. Anything you add here hides matching posts.</p>
+
+  <footer>
+    <label class="switch" title="Dim and outline matches instead of hiding them — useful for tuning the list">
+      <input type="checkbox" id="reveal">
+      <span>Preview mode</span>
+    </label>
+    <a href="#" id="report-link" title="Something wrong? Send a bug report">Report a bug</a>
+    <a href="#" id="options">Settings</a>
+  </footer>
+
+  <script src="common.js"></script>
+  <script src="popup.js"></script>
+</body>
+
+</html>

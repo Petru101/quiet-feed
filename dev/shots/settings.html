@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Settings for screenshots</title>
+  <base href="../../src/">
+</head>
+
+<body>
+  <script src="../dev/shots/stub.js"></script>
+  <script>
+    /* The real settings page markup and scripts, as in dev/ui-check.html. */
+    function load(src) {
+      return new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.body.appendChild(s);
+      });
+    }
+
+    fetch('options.html').then(function (r) { return r.text(); }).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.head.insertAdjacentHTML('beforeend', doc.head.innerHTML);
+      document.head.insertAdjacentHTML('beforeend', '<style>html { overflow: hidden; }</style>');
+      document.body.insertAdjacentHTML('beforeend', doc.body.innerHTML);
+      return load('common.js');
+    }).then(function () {
+      return load('options.js');
+    }).then(function () {
+      // ?section=N scrolls the Nth settings card (from 0) to the top.
+      var n = new URLSearchParams(location.search).get('section');
+      var target = n && document.querySelectorAll('section')[+n];
+      // Less than the 20px gap between cards, so no sliver of the one above shows.
+      if (target) window.scrollTo(0, target.offsetTop - 16);
+    });
+  </script>
+</body>
+
+</html>

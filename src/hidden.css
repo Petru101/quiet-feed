@@ -1,0 +1,131 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+/* Quiet Feed — the whole point of this file is that a hidden post keeps its
+   layout box. visibility:hidden hides the subtree (including shadow DOM, which
+   opacity/child rules would miss) while the element still occupies its slot,
+   so YouTube never sees the feed get shorter and never reloads to refill it. */
+
+[data-wf-state="hidden"] {
+  position: relative !important;
+  visibility: hidden !important;
+  overflow: hidden !important;
+  min-height: 26px;
+}
+
+/* visibility is inherited, so any part of a post can switch itself back on
+   with visibility: visible — Reddit's header rows do, and so does an image
+   the moment it finishes lazy-loading, which is why the leak comes and goes.
+   Opacity composites down the whole subtree and can't be undone from inside,
+   so fading every child except the placeholder closes that gap. Clicks are
+   blocked too, so nothing invisible stays clickable. */
+[data-wf-state="hidden"] > :not(.wf-veil) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Opt-in: no gap left behind. Reintroduces the reload loop on YouTube. */
+[data-wf-state="hidden"][data-wf-mode="collapse"] {
+  display: none !important;
+}
+
+/* A Short being skipped, or one you swiped back to. The renderer is already
+   positioned, and keeps its size: it is the whole player. Its placeholder is
+   opaque because the slot behind the renderer holds the Short's thumbnail. */
+[data-wf-short="hidden"] > :not(.wf-veil) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+[data-wf-short="hidden"] > .wf-veil {
+  font-size: 14px;
+  color: #aaa;
+  background: #181818;
+  border-color: #333;
+}
+
+/* Tuning mode — see what your list catches without losing the content. */
+[data-wf-state="marked"],
+[data-wf-short="marked"] {
+  opacity: 0.45 !important;
+  outline: 2px solid rgba(255, 72, 72, 0.65) !important;
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+/* visibility is inheritable, so the placeholder opts itself back in. */
+.wf-veil {
+  visibility: visible !important;
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 2147483000;
+  box-sizing: border-box;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 6px 10px;
+  margin: 0;
+  overflow: hidden;
+  font: 500 12px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #8b8b8b;
+  background: rgba(128, 128, 128, 0.08);
+  border: 1px dashed rgba(128, 128, 128, 0.4);
+  border-radius: 10px;
+  text-align: center;
+  user-select: none;
+}
+
+.wf-veil-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wf-veil-btn {
+  flex: none;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 999px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+
+.wf-veil-btn:hover {
+  background: rgba(128, 128, 128, 0.18);
+}
+
+/* Stands in for a removed <video>/<iframe> so the post keeps its height. */
+.wf-spacer {
+  visibility: hidden !important;
+  display: block;
+  flex: none;
+}
+
+/* Reading text in images (optional). While a post's picture hasn't been read
+   yet it is blurred, so the post can't show you what it's about to be hidden
+   for. The content script sets data-wf-ocr-blur on <html> to the post groups
+   switched on, and marks each img data-wf-read once it has been read.
+
+   The groups and the [src^=] prefixes here must match SCOPES and OCR_IMAGES
+   in common.js exactly: an image blurred here that the script never reads
+   would stay blurred for good. The self-check compares them. */
+html[data-wf-ocr-blur~="youtubeVideos"] :is(ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, ytd-playlist-renderer, ytd-playlist-video-renderer, ytd-radio-renderer, ytd-channel-renderer, ytd-reel-item-renderer, ytd-post-renderer, ytd-notification-renderer, ytm-rich-item-renderer, ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-compact-playlist-renderer, ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2, yt-lockup-view-model) :is(img[src^="https://i.ytimg.com/vi/"], img[src^="https://i.ytimg.com/vi_webp/"], img[src^="https://i.redd.it/"], img[src^="https://preview.redd.it/"], img[src^="https://cf.preview.redd.it/"], img[src^="https://external-preview.redd.it/"], img[src^="https://pbs.twimg.com/media/"], img[src^="https://pbs.twimg.com/card_img/"], img[src^="https://pbs.twimg.com/ext_tw_video_thumb/"], img[src^="https://pbs.twimg.com/amplify_video_thumb/"], img[src^="https://pbs.twimg.com/tweet_video_thumb/"]):not([data-wf-read]),
+html[data-wf-ocr-blur~="youtubeComments"] :is(ytd-comment-thread-renderer, ytd-comment-view-model, ytd-comment-renderer, ytm-comment-thread-renderer, ytm-comment-renderer) :is(img[src^="https://i.ytimg.com/vi/"], img[src^="https://i.ytimg.com/vi_webp/"], img[src^="https://i.redd.it/"], img[src^="https://preview.redd.it/"], img[src^="https://cf.preview.redd.it/"], img[src^="https://external-preview.redd.it/"], img[src^="https://pbs.twimg.com/media/"], img[src^="https://pbs.twimg.com/card_img/"], img[src^="https://pbs.twimg.com/ext_tw_video_thumb/"], img[src^="https://pbs.twimg.com/amplify_video_thumb/"], img[src^="https://pbs.twimg.com/tweet_video_thumb/"]):not([data-wf-read]),
+html[data-wf-ocr-blur~="redditPosts"] :is(shreddit-post, shreddit-ad-post, article, reddit-pdp-right-rail-post, div.thing.link, div.Post) :is(img[src^="https://i.ytimg.com/vi/"], img[src^="https://i.ytimg.com/vi_webp/"], img[src^="https://i.redd.it/"], img[src^="https://preview.redd.it/"], img[src^="https://cf.preview.redd.it/"], img[src^="https://external-preview.redd.it/"], img[src^="https://pbs.twimg.com/media/"], img[src^="https://pbs.twimg.com/card_img/"], img[src^="https://pbs.twimg.com/ext_tw_video_thumb/"], img[src^="https://pbs.twimg.com/amplify_video_thumb/"], img[src^="https://pbs.twimg.com/tweet_video_thumb/"]):not([data-wf-read]),
+html[data-wf-ocr-blur~="redditComments"] :is(shreddit-comment, shreddit-comment-tree-ad, div.thing.comment) :is(img[src^="https://i.ytimg.com/vi/"], img[src^="https://i.ytimg.com/vi_webp/"], img[src^="https://i.redd.it/"], img[src^="https://preview.redd.it/"], img[src^="https://cf.preview.redd.it/"], img[src^="https://external-preview.redd.it/"], img[src^="https://pbs.twimg.com/media/"], img[src^="https://pbs.twimg.com/card_img/"], img[src^="https://pbs.twimg.com/ext_tw_video_thumb/"], img[src^="https://pbs.twimg.com/amplify_video_thumb/"], img[src^="https://pbs.twimg.com/tweet_video_thumb/"]):not([data-wf-read]),
+html[data-wf-ocr-blur~="x"] :is(div[data-testid="cellInnerDiv"], article, div[data-testid="trend"], div[role="link"]) :is(img[src^="https://i.ytimg.com/vi/"], img[src^="https://i.ytimg.com/vi_webp/"], img[src^="https://i.redd.it/"], img[src^="https://preview.redd.it/"], img[src^="https://cf.preview.redd.it/"], img[src^="https://external-preview.redd.it/"], img[src^="https://pbs.twimg.com/media/"], img[src^="https://pbs.twimg.com/card_img/"], img[src^="https://pbs.twimg.com/ext_tw_video_thumb/"], img[src^="https://pbs.twimg.com/amplify_video_thumb/"], img[src^="https://pbs.twimg.com/tweet_video_thumb/"]):not([data-wf-read]) {
+  filter: blur(18px) !important;
+}
+
+/* X paints each photo as the background of a sibling <div> and keeps the
+   <img> itself transparent, so blurring the img alone shows nothing. Blur
+   its parent, which holds both. A rule of its own because :has() needs
+   Firefox 121; older versions drop just this rule, not the ones above. */
+html[data-wf-ocr-blur~="x"] :is(div[data-testid="cellInnerDiv"], article, div[data-testid="trend"], div[role="link"]) :has(> :is(img[src^="https://pbs.twimg.com/media/"], img[src^="https://pbs.twimg.com/card_img/"], img[src^="https://pbs.twimg.com/ext_tw_video_thumb/"], img[src^="https://pbs.twimg.com/amplify_video_thumb/"], img[src^="https://pbs.twimg.com/tweet_video_thumb/"]):not([data-wf-read])) {
+  filter: blur(18px) !important;
+}

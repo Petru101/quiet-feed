@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Quiet Feed UI check</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 0; display: flex; gap: 20px; padding: 16px; }
+    #mount { border: 1px solid #ccc; border-radius: 8px; align-self: flex-start; }
+    #out { white-space: pre; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  </style>
+</head>
+
+<body>
+  <div id="mount"></div>
+  <div><b>Results</b><div id="out">running…</div></div>
+
+  <script>
+    /* Loads the REAL popup markup and scripts against an in-memory storage
+       stub, so the popup is exercised as shipped rather than re-implemented.
+       Add ?locked=1 to boot with the opt-in password already set. */
+
+    const store = {
+      wfConfig: {
+        enabled: true,
+        words: ['trump', 'scammer', 'the office'],
+        sites: {
+          youtubeVideos: true, youtubeComments: true,
+          redditPosts: true, redditComments: true, x: true
+        }
+      }
+    };
+
+    // `store` is the local area; settings are mirrored there on every save, so
+    // the assertions below can keep reading it.
+    const syncStore = {};
+
+    /* Real storage structured-clones values on the way in and out, so a page
+       holding a reference can never change the stored copy without saving.
+       Sharing references here would hide exactly the class of bug these tests
+       look for. Writes are also broadcast, as storage.onChanged does. */
+    const clone = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+    const changeListeners = [];
+
+    function makeArea(backing, areaName) {
+      return {
+        get: function (keys) {
+          const o = {};
+          (typeof keys === 'string' ? [keys] : (keys || [])).forEach(k => {
+            if (k in backing) o[k] = clone(backing[k]);
+          });
+          return Promise.resolve(o);
+        },
+        set: function (obj) {
+          const changes = {};
+          Object.keys(obj).forEach(k => {
+            changes[k] = { oldValue: clone(backing[k]), newValue: clone(obj[k]) };
+            backing[k] = clone(obj[k]);
+          });
+          setTimeout(() => changeListeners.forEach(fn => fn(changes, areaName)), 0);
+          return Promise.resolve();
+        },
+        remove: function (k) { delete backing[k]; return Promise.resolve(); }
+      };
+    }
+
+    window.browser = {
+      storage: {
+        local: makeArea(store, 'local'),
+        sync: makeArea(syncStore, 'sync'),
+        onChanged: { addListener: function (fn) { changeListeners.push(fn); } }
+      },
+      runtime: {
+        onMessage: { addListener: function () { } },
+        openOptionsPage: function () { },
+        getManifest: function () {
+          return { name: 'Quiet Feed: Hide Posts by Keyword', version: '9.9.9' };
+        },
+        getURL: function (path) { return 'moz-extension://test/' + path; }
+      },
+      tabs: {
+        query: function () { return Promise.resolve([{ id: 1 }]); },
+        sendMessage: function () { return Promise.resolve(null); },
+        create: function (opts) { window.__lastTabCreate = opts; return Promise.resolve({}); }
+      }
+    };
+
+    /* The popup closes itself after opening a tab. In a real popup that's
+       correct; here it would close the harness mid-run, so record it instead. */
+    window.__closed = false;
+    window.close = function () { window.__closed = true; };
+
+    const results = [];
+    function check(name, pass, detail) {
+      results.push((pass ? 'PASS  ' : 'FAIL  ') + name + (detail ? '   [' + detail + ']' : ''));
+    }
+    function show() { document.getElementById('out').textContent = results.join('\n'); }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src + '?t=' + Date.now();
+        s.onload = resolve;
+        s.onerror = reject;
+        document.body.appendChild(s);
+      });
+    }
+
+    function waitFor(fn, ms) {
+      const started = Date.now();
+      return new Promise((resolve, reject) => {
+        (function poll() {
+          let ok = false;
+          try { ok = fn(); } catch (e) { ok = false; }
+          if (ok) return resolve();
+          if (Date.now() - started > (ms || 4000)) return reject(new Error('timeout'));
+          setTimeout(poll, 40);
+        })();
+      });
+    }
+
+    const $ = id => document.getElementById(id);
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    /* Assert what the user sees, not what a property says. `el.hidden = true`
+       is silently defeated by any author rule that sets `display`, so checking
+       el.hidden would pass while the element stayed on screen. */
+    const visible = el =>
+      getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
+
+    (async function () {
+      if (/options/.test(location.search)) return runOptions();
+
+      // Pull in popup.html's styles and body. innerHTML does not run scripts,
+      // so the page's own script tags stay inert and we control load order.
+      const html = await fetch('../src/popup.html').then(r => r.text());
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      document.head.insertAdjacentHTML('beforeend', doc.head.innerHTML);
+      $('mount').innerHTML = doc.body.innerHTML;
+
+      await loadScript('../src/common.js');
+
+      const wantLocked = /locked/.test(location.search);
+      const wantCollapsed = /collapsed/.test(location.search);
+      const wantInvalid = /invalid/.test(location.search);
+      if (wantInvalid) store.wfConfig.words = ['trump', '/[unclosed/', 'news'];
+      if (wantLocked) store.wfConfig.lock = await WF.makeLock('hunter2');
+      if (wantCollapsed) store.wfConfig.listCollapsed = true;
+
+      await loadScript('../src/popup.js');
+      await waitFor(() => /Words \(3\)/.test($('list-count').textContent));
+
+      if (wantInvalid) {
+        // An imported list can carry an entry that never compiles; it must be
+        // visibly inert rather than silently doing nothing.
+        const chips = [...$('list').querySelectorAll('li')];
+        const broken = chips.filter(li => li.classList.contains('bad'));
+        check('every word is still listed', chips.length === 3);
+        check('exactly the broken one is flagged', broken.length === 1);
+        check('it is the unparseable entry',
+          broken[0] && /\[unclosed/.test(broken[0].textContent));
+        check('hovering explains why',
+          /valid regular expression/i.test(broken[0].querySelector('.word').title));
+        check('valid entries are left alone',
+          chips.filter(li => /trump|news/.test(li.textContent))
+            .every(li => !li.classList.contains('bad')));
+
+        // and a new bad entry is refused up front, with a reason
+        $('add-input').value = '/a{2,1}/';
+        $('add-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        await waitFor(() => !$('warn').hidden, 2000);
+        check('a new invalid regex is refused',
+          /valid regular expression/i.test($('warn').textContent));
+        check('and is not added to the list',
+          store.wfConfig.words.indexOf('/a{2,1}/') === -1);
+
+        // a good one still goes in, and clears the warning
+        $('add-input').value = 'banksy';
+        $('add-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        await waitFor(() => store.wfConfig.words.indexOf('banksy') !== -1, 2000);
+        check('a valid word still adds normally', $('warn').hidden === true);
+
+        // Regression: a regex containing a comma must not be split on it.
+        $('add-input').value = '/\\d{2,4}/';
+        $('add-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        await waitFor(() => store.wfConfig.words.indexOf('/\\d{2,4}/') !== -1, 2000)
+          .catch(() => {});
+        check('a regex with a comma is added whole',
+          store.wfConfig.words.indexOf('/\\d{2,4}/') !== -1,
+          'got: ' + JSON.stringify(store.wfConfig.words.slice(-2)));
+        check('and is not torn into fragments',
+          store.wfConfig.words.every(w => w.indexOf('{2') === -1 || w === '/\\d{2,4}/'));
+
+        // commas still separate ordinary words
+        $('add-input').value = 'alpha, beta';
+        $('add-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        await waitFor(() => store.wfConfig.words.indexOf('beta') !== -1, 2000).catch(() => {});
+        check('commas still split plain words',
+          store.wfConfig.words.indexOf('alpha') !== -1 &&
+          store.wfConfig.words.indexOf('beta') !== -1);
+      } else if (wantCollapsed) {
+        // Reopening the popup in the folded state, then folding again.
+        check('opens with the list folded away', !visible($('list')));
+        check('count still shown while folded', /Words \(3\)/.test($('list-count').textContent));
+        check('caret shows the folded state', $('caret').classList.contains('closed'));
+
+        $('list-toggle').click();
+        await waitFor(() => visible($('list')));
+        check('one click reveals every word', $('list').querySelectorAll('li').length === 3);
+
+        $('list-toggle').click();
+        await waitFor(() => !visible($('list')));
+        check('and it folds away again', !visible($('list')),
+          'rendered height ' + $('list').getBoundingClientRect().height);
+      } else if (!wantLocked) {
+        // ---- feature: show/hide the word list ----
+        check('list starts expanded', visible($('list')));
+        check('header shows the count', /Words \(3\)/.test($('list-count').textContent));
+
+        $('list-toggle').click();
+        await waitFor(() => !visible($('list')));
+        check('toggle really hides the list', !visible($('list')),
+          'rendered height ' + $('list').getBoundingClientRect().height);
+        check('caret flips when collapsed', $('caret').classList.contains('closed'));
+        // The popup shows a toggle immediately and persists it just after, so
+        // wait for the write rather than asserting at the instant it's shown.
+        await waitFor(() => store.wfConfig.listCollapsed === true, 2000).catch(() => {});
+        check('collapsed state is remembered', store.wfConfig.listCollapsed === true);
+
+        $('list-toggle').click();
+        await waitFor(() => visible($('list')));
+        await waitFor(() => store.wfConfig.listCollapsed === false, 2000).catch(() => {});
+        check('toggle really shows it again', visible($('list')) &&
+          $('list').querySelectorAll('li').length === 3 &&
+          store.wfConfig.listCollapsed === false);
+
+        // Regression: hiding used to work exactly once, because an author
+        // `display` rule beat the [hidden] attribute.
+        let repeats = true;
+        for (let i = 0; i < 3; i++) {
+          $('list-toggle').click();
+          await waitFor(() => !visible($('list'))).catch(() => { repeats = false; });
+          if (visible($('list'))) repeats = false;
+
+          $('list-toggle').click();
+          await waitFor(() => visible($('list'))).catch(() => { repeats = false; });
+          if (!visible($('list'))) repeats = false;
+        }
+        check('hiding still works after repeated toggles', repeats);
+
+        // ---- feature: per-scope toggles in the popup ----
+        const keys = ['youtubeVideos', 'youtubeComments', 'redditPosts', 'redditComments', 'x'];
+        check('five pills are shown', keys.every(k => !!$('site-' + k)));
+        check('all five start on',
+          keys.every(k => $('site-' + k).getAttribute('aria-pressed') === 'true'));
+        check('the two Comments pills are distinguishable to a screen reader',
+          $('site-youtubeComments').getAttribute('aria-label') === 'YouTube comments' &&
+          $('site-redditComments').getAttribute('aria-label') === 'Reddit comments');
+
+        // each pill must move its own switch and nothing else
+        for (const key of keys) {
+          $('site-' + key).click();
+          await waitFor(() => store.wfConfig.sites[key] === false);
+
+          const others = keys.filter(k => k !== key);
+          check(key + ' turns off on its own',
+            store.wfConfig.sites[key] === false &&
+            $('site-' + key).getAttribute('aria-pressed') === 'false' &&
+            others.every(k => store.wfConfig.sites[k] === true),
+            'others still on: ' + others.join(', '));
+
+          $('site-' + key).click();
+          await waitFor(() => store.wfConfig.sites[key] === true);
+          check(key + ' turns back on', store.wfConfig.sites[key] === true);
+        }
+
+        check('delete buttons available when unlocked',
+          $('list').querySelectorAll('li button').length === 3);
+
+        // ---- lost updates: the list changed in another window meanwhile ----
+        // Settings adds a word while this popup is open, then a word is added
+        // here. The popup must not write its stale copy over the other change.
+        const ext = JSON.parse(JSON.stringify(store.wfConfig));
+        ext.words = ext.words.concat(['from-settings']);
+        ext.savedAt = Date.now();
+        await browser.storage.local.set({ wfConfig: ext });
+        await browser.storage.sync.set({ wfConfig: ext });
+        await sleep(150);
+
+        $('add-input').value = 'from-popup';
+        $('add-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        await waitFor(() => store.wfConfig.words.indexOf('from-popup') !== -1, 2000).catch(() => {});
+        check('adding here keeps a word added in another window meanwhile',
+          store.wfConfig.words.indexOf('from-settings') !== -1 &&
+          store.wfConfig.words.indexOf('from-popup') !== -1,
+          'words now: ' + store.wfConfig.words.join(', '));
+
+        await sleep(150);
+        check('the popup shows what the other window added',
+          [...$('list').querySelectorAll('.word')].some(el => el.textContent === 'from-settings'));
+
+        // ---- reporting a bug is reachable from the popup ----
+        $('report-link').click();
+        await waitFor(() => !!window.__lastTabCreate, 2000);
+        check('the popup can open a bug report',
+          /options\.html#report$/.test(window.__lastTabCreate.url),
+          window.__lastTabCreate.url);
+        check('and closes itself behind the new tab', window.__closed === true);
+      } else {
+        // ---- feature: opt-in password ----
+        check('locked popup shows the password bar', $('lockbar').hidden === false);
+        check('adding words is blocked', $('add-input').disabled === true && $('add-btn').disabled === true);
+        check('every site pill is blocked',
+          ['youtubeVideos', 'youtubeComments', 'redditPosts', 'redditComments', 'x']
+            .every(k => $('site-' + k).disabled === true));
+        check('master switch is blocked', $('enabled').disabled === true);
+        check('preview mode is blocked', $('reveal').disabled === true);
+        check('delete buttons are gone', $('list').querySelectorAll('li button').length === 0);
+        check('the words stay readable', $('list').querySelectorAll('li').length === 3);
+        check('list can still be folded while locked', (function () {
+          $('list-toggle').click();
+          const hidden = $('list').hidden === true;
+          $('list-toggle').click();
+          return hidden;
+        })());
+
+        // wrong password first
+        $('unlock-input').value = 'wrong';
+        $('unlock-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        await waitFor(() => /Wrong password/.test($('lock-msg').textContent), 6000);
+        check('wrong password is refused', $('lockbar').hidden === false &&
+          $('add-input').disabled === true);
+
+        // then the right one
+        $('unlock-input').value = 'hunter2';
+        $('unlock-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        await waitFor(() => $('lockbar').hidden === true, 6000);
+        check('correct password unlocks', $('lockbar').hidden === true);
+        check('editing is restored', $('add-input').disabled === false &&
+          $('site-youtubeVideos').disabled === false &&
+          $('site-redditComments').disabled === false &&
+          $('list').querySelectorAll('li button').length === 3);
+        check('unlock is remembered for a few minutes',
+          typeof store.wfUnlockUntil === 'number' && store.wfUnlockUntil > Date.now());
+      }
+
+      show();
+      console.log('RESULTS\n' + results.join('\n'));
+    })().catch(e => {
+      check('harness completed', false, e.message);
+      show();
+    });
+
+    /* The settings page: turning protection on, locking, unlocking, off again. */
+    async function runOptions() {
+      const html = await fetch('../src/options.html').then(r => r.text());
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      document.head.insertAdjacentHTML('beforeend', doc.head.innerHTML);
+      $('mount').innerHTML = doc.body.innerHTML;
+
+      await loadScript('../src/common.js');
+      await loadScript('../src/options.js');
+      await waitFor(() => $('words').value.indexOf('trump') !== -1);
+
+      check('starts with protection off', $('pw-off').hidden === false && $('pw-on').hidden === true);
+      check('settings are editable', $('words').disabled === false);
+
+      // ---- bug report ----
+      const report = $('report-text').value;
+      check('the report names the version', /Quiet Feed.*9\.9\.9/.test(report));
+      check('it carries the browser string', report.indexOf(navigator.userAgent) !== -1);
+      check('it says which scopes are on', /Sites: .*youtubeVideos=(on|off)/.test(report));
+      check('it counts the words', /Words: 3\b/.test(report));
+
+      /* The one that matters: what someone chooses to filter is personal, and
+         must never ride along to a stranger's inbox. */
+      check('it never contains the words themselves',
+        store.wfConfig.words.every(w => report.toLowerCase().indexOf(w.toLowerCase()) === -1),
+        'list was: ' + store.wfConfig.words.join(', '));
+
+      check('the address is right',
+        $('report-address').href.indexOf('mailto:petru@email.com') === 0);
+      check('the mailto carries the same details',
+        decodeURIComponent($('report-address').href).indexOf('Words: 3') !== -1);
+
+      // turn it on
+      $('pw-new').value = 'hunter2';
+      $('pw-confirm').value = 'hunter2';
+      $('pw-enable').click();
+      await waitFor(() => $('pw-on').hidden === false, 6000);
+      check('protection turns on', store.wfConfig.lock.enabled === true);
+      check('still unlocked right after setting it', $('lockbar').hidden === true &&
+        $('words').disabled === false);
+      check('password is not stored in the clear',
+        JSON.stringify(store.wfConfig.lock).indexOf('hunter2') === -1);
+
+      // the change-password row is collapsed until asked for
+      check('change-password row starts hidden', !visible($('pw-change-row')));
+      $('pw-change').click();
+      await waitFor(() => visible($('pw-change-row')), 2000);
+      check('change-password row opens on demand', visible($('pw-change-row')));
+
+      // mismatched passwords are refused
+      $('pw-new2').value = 'abcdef';
+      $('pw-confirm2').value = 'abcdeg';
+      $('pw-change-save').click();
+      await waitFor(() => /don't match/.test($('saved-pw').textContent), 3000);
+      check('mismatched passwords are refused', /don't match/.test($('saved-pw').textContent));
+
+      // lock it
+      $('pw-relock').click();
+      await waitFor(() => $('lockbar').hidden === false, 3000);
+      check('lock now locks the page', $('lockbar').hidden === false);
+      check('word list goes read-only', $('words').disabled === true);
+      check('hide-mode options are blocked',
+        document.querySelector('input[name="hideMode"]').disabled === true);
+      check('protection cannot be turned off while locked', $('pw-disable').disabled === true);
+      check('import is blocked', $('import').disabled === true);
+      check('but reporting a bug still works while locked',
+        $('report-copy').disabled === false && $('report-open').disabled === false);
+
+      // wrong, then right
+      $('unlock-input').value = 'nope';
+      $('unlock-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      await waitFor(() => /Wrong password/.test($('lock-msg').textContent), 6000);
+      check('wrong password refused here too', $('words').disabled === true);
+
+      $('unlock-input').value = 'hunter2';
+      $('unlock-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      await waitFor(() => $('lockbar').hidden === true, 6000);
+      check('unlocking restores editing', $('words').disabled === false &&
+        $('pw-disable').disabled === false);
+
+      // turn it off
+      $('pw-disable').click();
+      await waitFor(() => $('pw-off').hidden === false, 3000);
+      check('protection turns off', store.wfConfig.lock.enabled === false &&
+        $('lockbar').hidden === true);
+
+      // ---- lost updates: the list changed in another window while this page is open ----
+      // The popup adds a word, then an unrelated setting is flipped here. This
+      // page must not write its stale copy of the list back over it.
+      const ext1 = JSON.parse(JSON.stringify(store.wfConfig));
+      ext1.words = ext1.words.concat(['added-elsewhere']);
+      ext1.savedAt = Date.now();
+      await browser.storage.local.set({ wfConfig: ext1 });
+      await browser.storage.sync.set({ wfConfig: ext1 });
+      await sleep(150);
+
+      $('showLabel').click();
+      await sleep(400);
+      check('flipping a setting here keeps words added in another window',
+        store.wfConfig.words.indexOf('added-elsewhere') !== -1,
+        'words now: ' + store.wfConfig.words.join(', '));
+      check("the open page picks up the other window's change",
+        $('words').value.split('\n').indexOf('added-elsewhere') !== -1);
+
+      // An unsaved bulk edit here while another window adds a word. Saving must
+      // merge: keep their addition, apply this page's addition and removal.
+      const box = $('words');
+      let lines = box.value.split('\n').map(w => w.trim()).filter(Boolean);
+      lines = lines.filter(w => w.toLowerCase() !== 'scammer');
+      lines.push('mine-added');
+      box.value = lines.join('\n');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+
+      const ext2 = JSON.parse(JSON.stringify(store.wfConfig));
+      ext2.words = ext2.words.concat(['second-elsewhere']);
+      ext2.savedAt = Date.now();
+      await browser.storage.local.set({ wfConfig: ext2 });
+      await browser.storage.sync.set({ wfConfig: ext2 });
+      await sleep(200);
+
+      check('an unsaved edit here survives a change made elsewhere',
+        box.value.indexOf('mine-added') !== -1 && box.value.indexOf('scammer') === -1);
+
+      $('save-words').click();
+      await sleep(500);
+      const finalWords = store.wfConfig.words.map(w => w.toLowerCase());
+      check('saving keeps the word the other window added',
+        finalWords.indexOf('second-elsewhere') !== -1, finalWords.join(', '));
+      check('...adds the word typed here', finalWords.indexOf('mine-added') !== -1);
+      check('...and drops the word deleted here', finalWords.indexOf('scammer') === -1);
+
+      show();
+      console.log('RESULTS\n' + results.join('\n'));
+    }
+  </script>
+</body>
+
+</html>
