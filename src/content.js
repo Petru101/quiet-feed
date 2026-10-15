@@ -351,12 +351,20 @@
      so reading it would make every hidden post match itself forever. */
   var OURS_SEL = '.wf-veil';
 
-  var SKIP_SEL = [TIMESTAMP_SEL, PLAYER_SEL, EDITOR_SEL, OURS_SEL].join(', ');
+  /* Nor is a hover card's popup — the card Reddit shows over a user or
+     community name. Signed in, Reddit renders those cards into every post
+     ahead of time, so a badge reading "NFL" in one hid a post about a sloth
+     bear. Only the popup is skipped: the name it hangs off sits in the
+     card's default slot and is still read, so blocking a community by name
+     keeps working. */
+  var POPUP_SEL = ':is(rpl-hovercard, faceplate-hovercard) > [slot="content"]';
+
+  var SKIP_SEL = [TIMESTAMP_SEL, PLAYER_SEL, EDITOR_SEL, OURS_SEL, POPUP_SEL].join(', ');
 
   /* Changes in these are never news about a post: a player ticks its clock
-     and redraws its captions while it plays, and an editor changes with
-     every key you press. */
-  var QUIET_SEL = [PLAYER_SEL, EDITOR_SEL, OURS_SEL].join(', ');
+     and redraws its captions while it plays, an editor changes with every
+     key you press, and a hover card fills in when you point at a name. */
+  var QUIET_SEL = [PLAYER_SEL, EDITOR_SEL, OURS_SEL, POPUP_SEL].join(', ');
 
   /* One pass over a post's text, skipping timestamps, joined two ways.
      textContent runs neighbouring elements together with nothing in between,
@@ -920,6 +928,8 @@
     list.forEach(function (el) {
       // A post nested inside an already-hidden one is handled by its ancestor.
       if (el.parentElement && el.parentElement.closest('[data-wf-state="hidden"]')) return;
+      // The popup in a hover card can itself be an <article>; it's part of the card.
+      if (el.closest(POPUP_SEL)) return;
 
       var word = matchedWord(el);
       if (!word) return;

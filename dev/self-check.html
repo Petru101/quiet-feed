@@ -168,6 +168,31 @@
     dated.appendChild(datedAgo);
     feed.appendChild(dated);
 
+    /* Regression: signed in, Reddit renders each name's hover card into the
+       post ahead of time, popup and all, and the popup can be an <article>.
+       A card whose popup read "NFL" hid a post about a sloth bear, and the
+       popup was hidden as a post of its own. The name the card hangs off is
+       still what the post says, so a word there must keep hiding it. */
+    function hovercardPost(id, title, name, popup) {
+      var post = document.createElement('article');
+      post.id = id;
+      var postTitle = document.createElement('h3');
+      postTitle.textContent = title;
+      var card = document.createElement('rpl-hovercard');
+      var target = document.createElement('a');
+      target.textContent = name;
+      var content = document.createElement('article');
+      content.slot = 'content';
+      content.textContent = popup;
+      card.appendChild(target);
+      card.appendChild(content);
+      post.appendChild(card);
+      post.appendChild(postTitle);
+      feed.appendChild(post);
+    }
+    hovercardPost('carded', 'a mother sloth bear charges a tiger', 'r/nextfuckinglevel', 'the office');
+    hovercardPost('named', 'an ordinary post about gardening', 'r/theoffice the office', 'nothing to see');
+
     /* Records when the filter actually acts on each element, so a check that
        fails on timing can be told apart from one that fails on logic. */
     window.__timeline = [];
@@ -586,6 +611,16 @@
       await sleep(300);
       check('a blocked phrase inside a timestamp does not hide the post',
         dated.dataset.wfState === undefined, 'state=' + dated.dataset.wfState);
+
+      var carded = document.getElementById('carded');
+      var named = document.getElementById('named');
+      await waitForState(named, 'hidden');
+      check('a blocked phrase in a hover card popup does not hide the post',
+        carded.dataset.wfState === undefined, 'state=' + carded.dataset.wfState);
+      check('...nor the popup itself',
+        carded.querySelector('[slot="content"]').dataset.wfState === undefined);
+      check('a blocked phrase in the name a hover card hangs off still hides the post',
+        named.dataset.wfState === 'hidden', 'state=' + named.dataset.wfState);
 
       var escaper = document.getElementById('escaper');
       await waitForState(escaper, 'hidden');

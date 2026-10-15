@@ -71,17 +71,22 @@ SHIM_TAG = '<script src="compat.js"></script>'
 COMMON_TAG = '<script src="common.js"></script>'
 
 # The settings page names Firefox where it says who will ask for the image
-# permission. Chrome, Edge and Opera all take this package, so the Chromium
-# copy says "your browser". Rewritten on the way into the zip, like the shim.
+# permission and whose sync carries the list. Chrome, Edge and Opera all take
+# this package, so the Chromium copy says "your browser". Rewritten on the way
+# into the zip, like the shim.
 CHROME_TEXT = {
     'src/options.html': [
         ('Firefox will ask to let', 'Your browser will ask to let'),
         ("an image server that Firefox hasn't allowed yet.",
          "an image server that your browser hasn't allowed yet."),
+        ('other devices signed in to the same Firefox account',
+         "your other devices through your browser's sync"),
+        ('past what Firefox Sync', "past what your browser's sync"),
     ],
     'src/options.js': [
         ('"Couldn\'t ask Firefox for the permission."',
          '"Couldn\'t ask the browser for the permission."'),
+        ('Firefox Sync wouldn’t take it', 'your browser’s sync wouldn’t take it'),
     ],
 }
 

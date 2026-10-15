@@ -12,10 +12,12 @@
    are its checks — the URL and the permission are settled here, before
    anything reaches the engine.
 
-   The document is opened on the first read and left open. Its engines shut
-   down after a quiet minute on their own (ocr.js), and what it keeps after
-   that is the cache of pictures already read, which is worth keeping: the
-   service worker itself is stopped whenever Chrome likes, and would lose it. */
+   The document is opened on the first read and left open while the feature
+   is on. Its engines shut down after a quiet minute on their own (ocr.js),
+   and what it keeps after that is the cache of pictures already read, which
+   is worth keeping: the service worker itself is stopped whenever Chrome
+   likes, and would lose it. Once the feature is off it is closed, cache and
+   all, rather than staying in the browser's task manager reading nothing. */
 
 var OCR = (function () {
   'use strict';
@@ -42,6 +44,37 @@ var OCR = (function () {
     });
     return opening;
   }
+
+  /* Off means the setting is off, or no image host is allowed any more: the
+     settings page hands the permission back when it's switched off, and it
+     can also be taken back from the browser's own extension settings. */
+  function wanted() {
+    return Promise.all([
+      WF.loadConfig(),
+      Promise.all(WF.OCR_ORIGINS.map(function (origin) {
+        return browser.permissions.contains({ origins: [origin] })
+          .catch(function () { return false; });
+      }))
+    ]).then(function (got) {
+      return !!got[0].ocr && got[1].some(Boolean);
+    });
+  }
+
+  function closeIfOff() {
+    return Promise.resolve(opening).catch(function () { }).then(wanted).then(function (on) {
+      if (on) return;
+      return browser.offscreen.hasDocument().then(function (open) {
+        if (open) return browser.offscreen.closeDocument();
+      });
+    }).catch(function () { });
+  }
+
+  browser.storage.onChanged.addListener(function (changes) {
+    if (changes.wfConfig) closeIfOff();
+  });
+  browser.permissions.onRemoved.addListener(closeIfOff);
+  // Both events wake a stopped worker; this is the floor for one that slipped by.
+  closeIfOff();
 
   function read(url, key) {
     return ensureDocument().then(function () {
