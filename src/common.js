@@ -235,6 +235,33 @@ var WF = (function () {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  /* Typographic stand-ins, folded to what you'd type. Both sides are folded —
+     a post's text before it's matched, and every word in the list before it's
+     compiled — so "ma'am" matches "Ma’am" and "ma’am" matches "ma'am": phones
+     and editors curl quotes as you type, and sites set "Spider‑Man" with a
+     non-breaking hyphen. Invisible characters are dropped, so a soft hyphen
+     or a zero-width space can't split a word in two.
+
+     Full-width letters, ligatures and the styled "fonts" people paste from
+     the Mathematical Alphanumeric block (𝐓𝐫𝐮𝐦𝐩) get NFKC, but only those:
+     NFKC on everything would also turn "Nintendo™" into "NintendoTM" and a
+     footnote "word¹" into "word1", and whole-word matching would miss both. */
+  var FOLDS = [
+    [/[’‘‚‛ʼ`´′]/g, "'"],
+    [/[“”„‟″«»]/g, '"'],
+    [/[‐‑‒–—―−]/g, '-'],
+    [/…/g, '...'],
+    [/[  -   　]/g, ' '],
+    [/[­​-‍⁠﻿]/g, ''],
+    [/[ﬀ-ﬆ！-～\u{1d400}-\u{1d7ff}]/gu, function (c) { return c.normalize('NFKC'); }]
+  ];
+
+  function fold(s) {
+    s = String(s);
+    for (var i = 0; i < FOLDS.length; i++) s = s.replace(FOLDS[i][0], FOLDS[i][1]);
+    return s;
+  }
+
   /* Whole-word matching: letters and digits either side end a word, and so
      does anything else — except an underscore, which never separates words
      in writing, only in names.
@@ -250,7 +277,7 @@ var WF = (function () {
   var HANDLE_CHAR = '[\\p{L}\\p{N}_.-]';
 
   function wholeWord(body) {
-    body += '(?:[’\']?s)?';                 // plurals and possessives
+    body += "(?:'?s)?";                     // plurals and possessives; text is folded
     var atStart = '(?<=' + HANDLE_START + ')' + body +
       '(?!' + WORD_CHAR + '|[.-]' + WORD_CHAR + ')';
     var elsewhere = '(?<!' + WORD_CHAR + ')(?<!' + HANDLE_START + ')' +
@@ -295,7 +322,7 @@ var WF = (function () {
      case-insensitively; in 'word' mode it needs letter boundaries either side
      and tolerates a trailing plural or possessive s. */
   function compile(word, mode) {
-    var raw = String(word || '').trim();
+    var raw = fold(word || '').trim();
     if (!raw) return null;
 
     var asRegex = raw.match(/^\/(.+)\/([a-z]*)$/);
@@ -569,6 +596,7 @@ var WF = (function () {
     ocrOriginFor: ocrOriginFor,
     detectSite: detectSite,
     escapeRe: escapeRe,
+    fold: fold,
     compile: compile,
     compileAll: compileAll,
     isValid: isValid,

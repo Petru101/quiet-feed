@@ -236,7 +236,7 @@
       }
       if (re) {
         re.lastIndex = 0;
-        inImage = !re.test(textOf(el, true));
+        inImage = !re.test(WF.fold(textOf(el, true)));
       }
     }
     if (inImage) el.dataset.wfWhere = 'image';
@@ -469,6 +469,7 @@
   }
 
   function firstMatch(text) {
+    text = WF.fold(text);        // the list was folded the same way (WF.compile)
     for (var i = 0; i < patterns.length; i++) {
       patterns[i].re.lastIndex = 0;
       if (patterns[i].re.test(text)) return patterns[i].word;

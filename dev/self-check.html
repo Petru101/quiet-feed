@@ -478,7 +478,7 @@
       // --- handles are one word ---
       /* Regression: "ad" matched @something-ad-nonsense, so every Short from
          that channel was hidden for a word nobody could see in it. */
-      function hits(word, text) { return WF.compile(word, 'word').test(text); }
+      function hits(word, text) { return WF.compile(word, 'word').test(WF.fold(text)); }
       check('a word inside a handle does not match',
         !hits('ad', '@something-ad-nonsense') && !hits('ad', 'u/some.ad.guy') &&
         !hits('ad', 'r/ad_fans') && !hits('something', '@something-ad-nonsense'));
@@ -506,6 +506,31 @@
         hits('and then', 'And then it happened') && hits('salt and', 'salt and') && !hits('salt and', 'salt'));
       check('punctuation inside a word is kept as typed',
         hits('at&t', 'AT&T deals') && !hits('at&t', 'AT T deals') && hits('c++', 'learn c++ now'));
+      /* Regression: "ma'am" never matched "Spider Ma’am" — phones and editors
+         turn the apostrophe you type into a curly one, so the same word turns
+         up written with either. */
+      check('any apostrophe matches any other',
+        hits("ma'am", 'It’s Spider Ma’am again') && hits('ma’am', "yes ma'am") &&
+        hits("don't", 'I DONʼT know') && hits("ma'am", 'MA‘AM') && !hits("ma'am", 'maam'));
+
+      // --- typographic stand-ins match what you type ---
+      check('curly and angled quotes match straight ones',
+        hits('"quiet quitting"', 'the “quiet quitting” trend') && hits('“quiet quitting”', '"quiet quitting"') &&
+        hits('"x"', 'so-called „x“') && hits('"x"', '«x»'));
+      check('every dash matches a hyphen',
+        hits('spider-man', 'Spider‑Man') && hits('spider-man', 'SPIDER–MAN') && hits('1-0', '1—0') &&
+        hits('1-0', '1−0') && hits('spider–man', 'spider-man'));
+      check('an ellipsis matches three dots', hits('wait...', 'wait… what') && hits('wait…', 'wait...'));
+      check('every space matches a space',
+        hits('10 pm', '10 PM') && hits('10 pm', '10 PM') && hits('10 pm', '10 pm'));
+      check('invisible characters cannot split a word',
+        hits('trump', 'Tr­ump') && hits('trump', 'T​rump') && hits('trump', 'Tru⁠mp') &&
+        hits('trump', '﻿Trump'));
+      check('full-width, ligature and styled letters match plain ones',
+        hits('trump', 'ＴＲＵＭＰ') && hits('trump', '𝐓𝐫𝐮𝐦𝐩') && hits('trump', '𝓣𝓻𝓾𝓶𝓹') &&
+        hits('office', 'the oﬃce'));
+      check('...without gluing marks onto words',
+        hits('nintendo', 'Nintendo™ Switch') && hits('nintendo', 'the NINTENDO℠ store'));
 
       // --- settings that follow you between devices ---
       var A = window.__areas;
