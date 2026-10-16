@@ -62,10 +62,13 @@
       'https://i.redd.it/qf-swapped.png': 'TRUMP 2028',
       'https://preview.redd.it/qf-far.png?width=640': 'election night',
       'https://i.redd.it/qf-broken.png': null,         // the engine fails on this one
+      'https://preview.redd.it/qf-gif.gif?width=640&format=png8': 'WHEN THE WAR\nIS OVER',
+      'https://preview.redd.it/qf-titled-gif.gif?width=640&format=png8': 'ELECTION NIGHT',
       // A real URL from a real report: Reddit serves some users its previews from cf.preview.
       'https://cf.preview.redd.it/its-sad-but-true-v0-5gh72hgnqcph1.jpeg?width=1080&crop=smart&auto=webp&s=1dd718b92b6318e5366be2eac8b89ecdc9f466a9': 'WHEN THE WAR AGAINST\nTHE MACHINES STARTS'
     };
 
+    var changed = null;        // the content script's settings listener
     var calls = [];            // every image the page asked to have read
     var outstanding = 0;
     var maxOutstanding = 0;
@@ -74,7 +77,7 @@
       storage: {
         local: makeArea('local'),
         sync: makeArea('sync'),
-        onChanged: { addListener: function () { } }
+        onChanged: { addListener: function (fn) { changed = fn; } }
       },
       runtime: {
         onMessage: { addListener: function () { } },
@@ -123,6 +126,21 @@
     var avatar = post('avatar', 'Just an avatar here', ['https://styles.redditmedia.com/t5_1/avatar.png']);
     var broken = post('broken', 'Nothing to see', ['https://i.redd.it/qf-broken.png']);
     var cfPost = post('cf', "It's sad but true", ['https://cf.preview.redd.it/its-sad-but-true-v0-5gh72hgnqcph1.jpeg?width=1080&crop=smart&auto=webp&s=1dd718b92b6318e5366be2eac8b89ecdc9f466a9']);
+
+    /* Reddit keeps a GIF or video's picture inside its player, which hiding
+       tears out to silence it. */
+    function gifPost(id, text, src) {
+      var a = post(id, text, []);
+      var player = document.createElement('shreddit-player');
+      var img = document.createElement('img');
+      img.setAttribute('src', src);
+      img.alt = 'media poster';
+      player.appendChild(img);
+      a.appendChild(player);
+      return a;
+    }
+    var gif = gifPost('gif', 'Damn, i hate it when that happens', 'https://preview.redd.it/qf-gif.gif?width=640&format=png8');
+    var titledGif = gifPost('titled-gif', 'Trump at it again', 'https://preview.redd.it/qf-titled-gif.gif?width=640&format=png8');
 
     var loose = document.createElement('div');       // an image outside any post
     var looseImg = document.createElement('img');
@@ -234,6 +252,24 @@
 
       var once = calls.filter(function (u) { return u === 'https://i.redd.it/qf-meme.png'; }).length;
       check('each picture is read once', once === 1, once + ' reads');
+
+      var gifHidden = await until(function () { return gif.dataset.wfState === 'hidden'; });
+      check('a GIF post is hidden for a word in the picture inside its player', gifHidden);
+      check('...and its player is torn out', !gif.querySelector('shreddit-player'));
+      check('a GIF post hidden by its title never has its picture read',
+        titledGif.dataset.wfState === 'hidden' &&
+        calls.indexOf('https://preview.redd.it/qf-titled-gif.gif?width=640&format=png8') === -1);
+
+      /* Every post is decided again when the list changes. The player, and
+         the picture in it, are gone by then. */
+      areas.local.wfConfig = Object.assign({}, areas.local.wfConfig, { words: ['election', 'war', 'bread'], savedAt: Date.now() });
+      changed({ wfConfig: {} });
+      await sleep(600);
+      check('after the list changes, a GIF post hidden for its picture stays hidden',
+        gif.dataset.wfState === 'hidden', gif.dataset.wfState || 'shown');
+      var titledGifHidden = await until(function () { return titledGif.dataset.wfState === 'hidden'; }, 4000);
+      check('a GIF post whose title word was removed has its torn-out picture read, and matched', titledGifHidden,
+        (titledGif.querySelector('.wf-veil-label') || {}).textContent || 'shown');
 
       /* X paints photos as a background on a sibling div; the parent must blur. */
       if (CSS.supports('selector(:has(> img))')) {

@@ -42,6 +42,7 @@
      and would make a hidden post's text appear to change under it — passed
      through WF.ocrImageKey, so one picture served at two URLs is read once. */
   var IMG_SEL = WF.OCR_IMAGES.map(function (p) { return 'img[src^="' + p + '"]'; }).join(',');
+  var PICTURE_SEL = IMG_SEL + ', .wf-spacer[data-wf-src]';   // see spacerFor
   var ocrOn = false;             // reading images on this page right now
   var ocrGranted = false;        // the background says Firefox allowed the image hosts
   var ocrText = new Map();       // image key -> text read from it ('' for none), oldest first
@@ -64,14 +65,35 @@
     return out;
   }
 
-  /* Same-size stand-in, measured while the original is still in the document. */
+  /* Same-size stand-in, measured while the original is still in the document.
+
+     It also keeps the pictures the original held. Reddit puts a GIF or
+     video's picture inside its player, so tearing the player out took the
+     only place its text could be found: the next time posts were decided
+     again — a word added, the extension switched off and on — a post hidden
+     for a word in its picture came back, with an empty black player. */
   function spacerFor(el) {
     var rect = el.getBoundingClientRect();
     var d = document.createElement('div');
     d.className = 'wf-spacer';
     if (rect.height > 0) d.style.height = Math.round(rect.height) + 'px';
     if (rect.width > 0) d.style.width = Math.round(rect.width) + 'px';
+
+    var srcs = [];
+    deepQueryAll(el, PICTURE_SEL).forEach(function (n) {
+      picturesOf(n).forEach(function (src) {
+        if (srcs.indexOf(src) === -1) srcs.push(src);
+      });
+    });
+    if (srcs.length) d.dataset.wfSrc = srcs.join(' ');
     return d;
+  }
+
+  /* The picture URLs a PICTURE_SEL match stands for. A spacer's are
+     space-separated: WF.ocrImageUrl never passes a URL with a space in it. */
+  function picturesOf(n) {
+    if (n.tagName === 'IMG') return [n.getAttribute('src')];
+    return n.getAttribute('data-wf-src').split(' ').filter(WF.ocrImageUrl);
   }
 
   function hasMedia(el) {
@@ -472,9 +494,11 @@
     if (!ocrOn) return '';
     var parts = [];
     try {
-      el.querySelectorAll(IMG_SEL).forEach(function (img) {
-        var text = ocrText.get(WF.ocrImageKey(img.getAttribute('src')));
-        if (text) parts.push(text);
+      el.querySelectorAll(PICTURE_SEL).forEach(function (n) {
+        picturesOf(n).forEach(function (src) {
+          var text = ocrText.get(WF.ocrImageKey(src));
+          if (text) parts.push(text);
+        });
       });
     } catch (e) { /* ignore */ }
     return parts.join('\n');
@@ -506,8 +530,9 @@
       keepText(key, text);
       // The posts showing it now say more than when they were last read.
       try {
-        document.querySelectorAll(IMG_SEL).forEach(function (img) {
-          if (WF.ocrImageKey(img.getAttribute('src')) === key) changedIn(img);
+        document.querySelectorAll(PICTURE_SEL).forEach(function (n) {
+          var shows = picturesOf(n).some(function (src) { return WF.ocrImageKey(src) === key; });
+          if (shows) changedIn(n);
         });
       } catch (e) { /* ignore */ }
       schedule();
@@ -527,37 +552,41 @@
   /* Which images to read next: unread, not in a post already hidden, and
      close to the screen — nearest first, a couple at a time, so a fast scroll
      doesn't leave a queue of pictures nobody will see ahead of the ones that
-     are on screen now. */
+     are on screen now. A spacer's pictures count too: a post hidden for its
+     title, with its player torn out, can stop matching when the list
+     changes, and then its picture still deserves a read. */
   function readImages() {
     if (!ocrOn || !postSel) return;
 
-    var imgs;
-    try { imgs = document.querySelectorAll(IMG_SEL); } catch (e) { return; }
+    var nodes;
+    try { nodes = document.querySelectorAll(PICTURE_SEL); } catch (e) { return; }
 
     var view = window.innerHeight || 800;
     var wanted = [];
-    imgs.forEach(function (img) {
-      var src = img.getAttribute('src');
-      if (img.getAttribute('data-wf-read') === src) return;
+    nodes.forEach(function (n) {
+      var isImg = n.tagName === 'IMG';
+      picturesOf(n).forEach(function (src) {
+        if (isImg && n.getAttribute('data-wf-read') === src) return;
 
-      var post;
-      try { post = img.closest(postSel); } catch (e) { return; }
-      if (!post) return;                              // not in a filtered post; not blurred
+        var post;
+        try { post = n.closest(postSel); } catch (e) { return; }
+        if (!post) return;                              // not in a filtered post; not blurred
 
-      var decidedBy = img.closest('[data-wf-state]');
-      var state = decidedBy && decidedBy.dataset.wfState;
-      if (state === 'hidden') return;                 // unseen anyway; don't spend time on it
-      if (state === 'revealed') { img.setAttribute('data-wf-read', src); return; }
+        var decidedBy = n.closest('[data-wf-state]');
+        var state = decidedBy && decidedBy.dataset.wfState;
+        if (state === 'hidden') return;                 // unseen anyway; don't spend time on it
+        if (state === 'revealed') { if (isImg) n.setAttribute('data-wf-read', src); return; }
 
-      var key = WF.ocrImageKey(src);
-      if (ocrText.has(key)) { img.setAttribute('data-wf-read', src); return; }
-      if (ocrAsked.has(key) || document.hidden) return;
+        var key = WF.ocrImageKey(src);
+        if (ocrText.has(key)) { if (isImg) n.setAttribute('data-wf-read', src); return; }
+        if (ocrAsked.has(key) || document.hidden) return;
 
-      var rect = img.getBoundingClientRect();
-      if (!rect.width && !rect.height) rect = post.getBoundingClientRect();
-      var distance = rect.bottom < 0 ? -rect.bottom : Math.max(0, rect.top - view);
-      if (distance > view * OCR_AHEAD) return;
-      wanted.push({ key: key, src: src, distance: distance });
+        var rect = n.getBoundingClientRect();
+        if (!rect.width && !rect.height) rect = post.getBoundingClientRect();
+        var distance = rect.bottom < 0 ? -rect.bottom : Math.max(0, rect.top - view);
+        if (distance > view * OCR_AHEAD) return;
+        wanted.push({ key: key, src: src, distance: distance });
+      });
     });
 
     wanted.sort(function (a, b) { return a.distance - b.distance; });
