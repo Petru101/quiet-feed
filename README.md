@@ -166,6 +166,11 @@ from a picture loses a lone `&`. A symbol inside a word, as in `AT&T` or `c++`, 
 Matching is always case-insensitive. Switch **Matching** to "anywhere in the text" in settings
 if you'd rather `art` also caught "particle".
 
+Typographic stand-ins match what you type, both ways: `ma'am` catches "Ma’am", `spider-man`
+catches "Spider‑Man" and "SPIDER–MAN", `"quiet quitting"` catches “quiet quitting”, and `wait...`
+catches "wait…". Invisible characters can't split a word, and full-width and styled letters
+(ＴＲＵＭＰ, 𝐓𝐫𝐮𝐦𝐩) match plain ones — but "Nintendo™" still matches `nintendo`.
+
 Commas separate several entries at once — except when the whole entry is a regex, since a
 quantifier like `{2,4}` contains one and splitting there would produce two pieces of nonsense
 that both look like ordinary words.
