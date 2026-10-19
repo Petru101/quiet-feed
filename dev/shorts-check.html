@@ -226,6 +226,14 @@
       meta.appendChild(channel);
       meta.appendChild(blanks[1]);
       meta.appendChild(title);
+      // A link to a different Short, under the title.
+      var linked = document.createElement('yt-reel-carousel-view-model');
+      var link = document.createElement('a');
+      link.href = '/shorts/zzzzzzzzzzz';
+      link.setAttribute('aria-label', 'Conductor destroys a violin');
+      link.textContent = 'Conductor destroys a violin';
+      linked.appendChild(link);
+      meta.appendChild(linked);
     }
 
     function go(step) {
@@ -467,11 +475,12 @@
       check('the popup counts the Shorts it skipped or covered', stats.counts.trump === 3, JSON.stringify(stats.counts));
 
       // --- captions don't count as text ---
-      setWords(['caption']);
+      setWords(['caption', 'violin']);
       await sleep(1500);
       check('a covered Short is uncovered and plays when its word is removed',
         !renderer.dataset.wfShort && !video.paused);
       check("the player's own captions are not read", !renderer.dataset.wfShort, 'state=' + renderer.dataset.wfShort);
+      check('nor is its link to a different Short', !renderer.dataset.wfShort, 'state=' + renderer.dataset.wfShort);
 
       setWords(['trump', 'ad']);
       await waitFor(function () { return renderer.dataset.wfShort === 'hidden'; });

@@ -222,8 +222,8 @@ Then visit these — every check should say PASS:
 | Page | Covers |
 | --- | --- |
 | `/dev/self-check.html` | Hiding, layout, silencing, matching, scopes, hosts, storage, merging, hashing, glued text, visibility leaks, timestamps, handles, phrases and their punctuation (111) |
-| `/dev/shorts-check.html` | Shorts player, desktop: skip once, two matches in a row, no double skip on a stale title, next Short not left paused, a handle containing a blocked word, skipping upwards on the way back up, covered at the top, Show, counts, captions, skipped again on the way down (25) |
-| `/dev/shorts-check.html?mobile=1` | The same against m.youtube.com's player shape (25) |
+| `/dev/shorts-check.html` | Shorts player, desktop: skip once, two matches in a row, no double skip on a stale title, next Short not left paused, a handle containing a blocked word, skipping upwards on the way back up, covered at the top, Show, counts, captions, a link to another Short, skipped again on the way down (26) |
+| `/dev/shorts-check.html?mobile=1` | The same against m.youtube.com's player shape (26) |
 | `/dev/shorts-check.html?late=1` | A word added while its Short is on screen: that Short is skipped, not left "Hidden"; scrolling up, a settings change keeps the direction (5) |
 | `/dev/shorts-check.html?hidden=1` | A Short opened in a background tab: covered, Next not pressed while hidden, skipped once shown, after the player takes Next (6) |
 | `/dev/shorts-check.html?hidden=1&slow=1` | The same with a player that ignores the first press after being shown: pressed again (6) |
@@ -332,6 +332,9 @@ m.youtube.com, logged out, and `shorts-check.html` replays it.
 - **Captions live inside the renderer** (`.ytp-caption-window-container`, inside `ytd-player` /
   `player-component`) and change every second. `PLAYER_SEL` keeps player chrome out of every
   post's text.
+- **A Short can link to a different Short** under its title (`yt-reel-carousel-view-model`, a
+  ▶ chip with the other Short's title, on desktop and mobile alike). `LINKED_SEL` keeps it out
+  of the text, or a word in the linked title hid the Short carrying it.
 - **Text in images reads each Short's first frame**, `i.ytimg.com/vi/ID/frame0.jpg`, since the
   video can't be read. On eleven Shorts it read burned-in captions at least as well as the
   full-size thumbnail (`oardefault.jpg`, up to 1080×1920), in ~0.5s against ~0.8s. Desktop puts

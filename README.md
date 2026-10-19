@@ -61,7 +61,8 @@ it, then the player moves on to the next one.
   after it appears; until then it stays covered and paused.
 - **Preview mode** outlines a matching Short and lets it play, without skipping.
 - It's part of the YouTube **Videos** switch. The text shown with a Short — title, channel,
-  hashtags — is matched; the player's subtitles are not. With **Read text in images** on, so is
+  hashtags — is matched; the player's subtitles and the ▶ link to a different Short under the
+  title are not. With **Read text in images** on, so is
   text burned into the video itself (see below).
 
 ## Using it
