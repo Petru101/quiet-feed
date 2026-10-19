@@ -221,7 +221,7 @@ Then visit these — every check should say PASS:
 
 | Page | Covers |
 | --- | --- |
-| `/dev/self-check.html` | Hiding, layout, silencing, matching, scopes, hosts, storage, merging, hashing, glued text, visibility leaks, timestamps, handles, phrases and their punctuation (111) |
+| `/dev/self-check.html` | Hiding, layout, silencing, matching, scopes, hosts, storage, merging, hashing, glued text, visibility leaks, timestamps, hover cards, community status, handles, phrases and their punctuation (123) |
 | `/dev/shorts-check.html` | Shorts player, desktop: skip once, two matches in a row, no double skip on a stale title, next Short not left paused, a handle containing a blocked word, skipping upwards on the way back up, covered at the top, Show, counts, captions, a link to another Short, skipped again on the way down (26) |
 | `/dev/shorts-check.html?mobile=1` | The same against m.youtube.com's player shape (26) |
 | `/dev/shorts-check.html?late=1` | A word added while its Short is on screen: that Short is skipped, not left "Hidden"; scrolling up, a settings change keeps the direction (5) |

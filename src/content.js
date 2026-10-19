@@ -381,16 +381,22 @@
      keeps working. */
   var POPUP_SEL = ':is(rpl-hovercard, faceplate-hovercard) > [slot="content"]';
 
+  /* Nor is a community's status, the emoji Reddit shows by its name on every
+     post from it. Its button is labelled with the status itself:
+     r/nextfuckinglevel's reads "Community status: NFL", so blocking NFL hid
+     every post from there. The popup it opens is already skipped above. */
+  var STATUS_SEL = '[data-testid^="community-status"]';
+
   /* Nor is the link a Short carries to a different Short, under its title.
      It names that other Short, so a word in its title hid this one. */
   var LINKED_SEL = 'yt-reel-carousel-view-model';
 
-  var SKIP_SEL = [TIMESTAMP_SEL, PLAYER_SEL, EDITOR_SEL, OURS_SEL, POPUP_SEL, LINKED_SEL].join(', ');
+  var SKIP_SEL = [TIMESTAMP_SEL, PLAYER_SEL, EDITOR_SEL, OURS_SEL, POPUP_SEL, STATUS_SEL, LINKED_SEL].join(', ');
 
   /* Changes in these are never news about a post: a player ticks its clock
      and redraws its captions while it plays, an editor changes with every
      key you press, and a hover card fills in when you point at a name. */
-  var QUIET_SEL = [PLAYER_SEL, EDITOR_SEL, OURS_SEL, POPUP_SEL, LINKED_SEL].join(', ');
+  var QUIET_SEL = [PLAYER_SEL, EDITOR_SEL, OURS_SEL, POPUP_SEL, STATUS_SEL, LINKED_SEL].join(', ');
 
   /* One pass over a post's text, skipping timestamps, joined two ways.
      textContent runs neighbouring elements together with nothing in between,

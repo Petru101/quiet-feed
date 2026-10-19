@@ -193,6 +193,38 @@
     hovercardPost('carded', 'a mother sloth bear charges a tiger', 'r/nextfuckinglevel', 'the office');
     hovercardPost('named', 'an ordinary post about gardening', 'r/theoffice the office', 'nothing to see');
 
+    /* Regression: Reddit shows a community's status by its name on every post
+       from it, as a button labelled with the status. r/nextfuckinglevel's
+       reads "Community status: NFL", and blocking NFL hid every post there. */
+    (function () {
+      var post = document.createElement('article');
+      post.id = 'statused';
+      var bar = document.createElement('span');
+      bar.slot = 'credit-bar';
+      var card = document.createElement('rpl-hovercard');
+      var button = document.createElement('button');
+      button.dataset.testid = 'community-status-trigger';
+      button.setAttribute('aria-label', 'Community status: The Office');
+      var icon = document.createElement('img');
+      icon.dataset.testid = 'community-status-icon';
+      icon.alt = 'the office';
+      button.appendChild(icon);
+      var content = document.createElement('article');
+      content.slot = 'content';
+      var text = document.createElement('div');
+      text.dataset.testid = 'community-status-text';
+      text.textContent = 'The Office';
+      content.appendChild(text);
+      card.appendChild(button);
+      card.appendChild(content);
+      bar.appendChild(card);
+      post.appendChild(bar);
+      var postTitle = document.createElement('h3');
+      postTitle.textContent = 'a kestrel hunting while hovering';
+      post.appendChild(postTitle);
+      feed.appendChild(post);
+    })();
+
     /* Records when the filter actually acts on each element, so a check that
        fails on timing can be told apart from one that fails on logic. */
     window.__timeline = [];
@@ -646,6 +678,9 @@
         carded.querySelector('[slot="content"]').dataset.wfState === undefined);
       check('a blocked phrase in the name a hover card hangs off still hides the post',
         named.dataset.wfState === 'hidden', 'state=' + named.dataset.wfState);
+      var statused = document.getElementById('statused');
+      check("a blocked phrase in a community's status does not hide its posts",
+        statused.dataset.wfState === undefined, 'state=' + statused.dataset.wfState);
 
       var escaper = document.getElementById('escaper');
       await waitForState(escaper, 'hidden');
