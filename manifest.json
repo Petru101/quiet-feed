@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Quiet Feed: Hide Posts by Keyword",
-  "version": "2.10",
+  "version": "2.11",
   "author": "Petru",
   "description": "Hide whole posts containing your chosen words on YouTube, Reddit and X. Hides rather than removes, so feeds don't spiral into reloading, and silences video in hidden posts.",
   "browser_specific_settings": {
