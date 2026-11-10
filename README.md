@@ -10,6 +10,7 @@ It's free, there is no server, no data collection.
 
 <img width="340" height="321" alt="image" src="https://github.com/user-attachments/assets/3747d6fe-753b-499a-ad6e-a6f7df1191ce" />
 
+
 Features:
 
 - easy add and remove words
@@ -22,7 +23,11 @@ Features:
 - you can enable reading words from images
 - everything runs on your computer
 
+**Install:**
+- [Firefox] https://addons.mozilla.org/en-US/firefox/addon/quiet-feed-filter/
+- [Chrome] https://chromewebstore.google.com/detail/quiet-feed-hide-posts-by/gffelgkbghiehmlkepbpoanpfmffgacm
 
+  
 ### How words match
 
 
@@ -43,6 +48,7 @@ Text is read from the whole post container, so a match on the title, body, chann
 subreddit or flair all hide the post.  
 
 The add-on id is `quietfeed@petru`. 
+
 
 
 ## Files
